@@ -65,3 +65,8 @@ macos/Flutter/GeneratedPluginRegistrant.swift
 pubspec.lock
 devtools_options.yaml
 android/app/src/main/res/values/themes.xml
+assets/spell_check_model.tflite
+
+# models 
+python/german_gec_mt5
+assets/models

@@ -1,0 +1,26 @@
+{
+  "model_name": "German Grammar Correction mT5",
+  "version": "1.0.0",
+  "training_stages": 3,
+  "base_model": "google/mt5-base",
+  "languages": [
+    "de"
+  ],
+  "capabilities": [
+    "Kasuskorrektur",
+    "Verbkonjugation",
+    "Artikelkorrektur",
+    "Alltagssprache-Normalisierung",
+    "Rechtschreibkorrektur"
+  ],
+  "performance": {
+    "target_latency_ms": 500,
+    "target_accuracy": 0.9,
+    "max_memory_gb": 3
+  },
+  "deployment": {
+    "mobile_ready": true,
+    "offline_capable": true,
+    "hybrid_mode": true
+  }
+}
