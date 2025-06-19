@@ -1,11 +1,13 @@
-import 'dart:typed_data';
+import 'dart:async';
+import 'dart:math' as math;
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'dart:convert';
-import 'dart:io';
 
 class GermanGECService {
-  static const String modelAsset = 'assets/models/german_gec_dynamic.tflite';
-  static const String vocabAsset = 'assets/models/vocab.json';
+  static const String modelAsset = 'assets/models/de_grammar_model.tflite';
+  static const String vocabAsset = 'assets/models/de_vocab.json';
   static const int maxLength = 64;
   
   Interpreter? _interpreter;
@@ -16,7 +18,7 @@ class GermanGECService {
     try {
       // Load TFLite model
       _interpreter = await Interpreter.fromAsset(modelAsset);
-      print('TFLite model loaded successfully');
+      debugPrint('TFLite model loaded successfully');
       
       // Load vocabulary
       await _loadVocabulary();
@@ -24,24 +26,24 @@ class GermanGECService {
       // Allocate tensors
       _interpreter!.allocateTensors();
       
-      print('German GEC Service initialized');
+      debugPrint('German GEC Service initialized');
     } catch (e) {
-      print('Error initializing GEC Service: $e');
+      debugPrint('Error initializing GEC Service: $e');
       throw Exception('Failed to initialize German GEC Service');
     }
   }
   
   Future<void> _loadVocabulary() async {
     try {
-      final String vocabJson = await DefaultAssetBundle.of(context).loadString(vocabAsset);
+      final String vocabJson = await rootBundle.loadString(vocabAsset);
       final Map<String, dynamic> vocabData = json.decode(vocabJson);
       
       _vocab = Map<String, int>.from(vocabData);
       _reverseVocab = _vocab!.map((key, value) => MapEntry(value, key));
       
-      print('Vocabulary loaded: ${_vocab!.length} tokens');
+      debugPrint('Vocabulary loaded: ${_vocab!.length} tokens');
     } catch (e) {
-      print('Error loading vocabulary: $e');
+      debugPrint('Error loading vocabulary: $e');
       // Fallback: create minimal vocab
       _createMinimalVocab();
     }
@@ -152,7 +154,7 @@ class GermanGECService {
       
     } catch (e) {
       stopwatch.stop();
-      print('Error during inference: $e');
+      debugPrint('Error during inference: $e');
       
       return GECResult(
         originalText: text,
@@ -184,8 +186,8 @@ class GermanGECService {
     
     for (final logits in predictions) {
       final maxLogit = logits.reduce((a, b) => a > b ? a : b);
-      final expSum = logits.fold(0.0, (sum, logit) => sum + exp(logit - maxLogit));
-      final softmax = exp(maxLogit - maxLogit) / expSum;
+      final expSum = logits.fold(0.0, (sum, logit) => sum + math.exp(logit - maxLogit));
+      final softmax = math.exp(maxLogit - maxLogit) / expSum;
       
       if (softmax > 0.1) { // Only count confident predictions
         totalConfidence += softmax;

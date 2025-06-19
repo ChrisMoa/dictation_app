@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:speech_to_text/speech_to_text.dart';
+import 'package:dictation_app/core/services/ai_grammar_service.dart';
 import 'package:dictation_app/features/dictation/data/repositories/speech_repository_impl.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
 import 'package:dictation_app/features/dictation/domain/repositories/speech_repository.dart';
@@ -25,6 +26,11 @@ Future<void> setupDependencyInjection() async {
     debugPrint('DI: Registering external dependencies');
     getIt.registerLazySingleton<SpeechToText>(() => SpeechToText());
     debugPrint('DI: SpeechToText registered');
+    
+    // AI Grammar Service
+    debugPrint('DI: Registering AI Grammar Service');
+    getIt.registerLazySingleton<AIGrammarService>(() => AIGrammarService());
+    debugPrint('DI: AIGrammarService registered');
     
     // Data Sources
     debugPrint('DI: Registering data sources');
