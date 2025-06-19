@@ -284,19 +284,31 @@ class AIGrammarService {
   factory AIGrammarService() => _instance;
   AIGrammarService._internal();
 
-  GrammarCorrectionProvider _currentProvider = OfflineGECProvider();
+  GrammarCorrectionProvider? _currentProvider;
   
   /// Set the grammar correction provider to use
   void setProvider(GrammarCorrectionProvider provider) {
+    _currentProvider?.dispose();
     _currentProvider = provider;
   }
 
   /// Get the current provider name
-  String get currentProviderName => _currentProvider.providerName;
+  String get currentProviderName => _currentProvider?.providerName ?? 'No Provider';
+
+  /// Get the current provider (for accessing hybrid-specific methods)
+  GrammarCorrectionProvider? get currentProvider => _currentProvider;
 
   /// Corrects German text using the current provider
   Future<GrammarCorrectionResult> correctGermanText(String text) async {
-    debugPrint('AIGrammarService: Starting grammar correction with ${_currentProvider.providerName}');
+    if (_currentProvider == null) {
+      debugPrint('AIGrammarService: No provider set, using default offline provider');
+      final defaultProvider = OfflineGECProvider();
+      final result = await defaultProvider.correctText(text);
+      defaultProvider.dispose();
+      return result;
+    }
+
+    debugPrint('AIGrammarService: Starting grammar correction with ${_currentProvider!.providerName}');
     
     if (text.trim().isEmpty) {
       return GrammarCorrectionResult(
@@ -304,14 +316,14 @@ class AIGrammarService {
         correctedText: text,
         confidence: 1.0,
         errors: [],
-        correctionMethod: _currentProvider.providerName,
+        correctionMethod: _currentProvider!.providerName,
       );
     }
     
     try {
-      return await _currentProvider.correctText(text);
+      return await _currentProvider!.correctText(text);
     } catch (e) {
-      debugPrint('AIGrammarService: Error with ${_currentProvider.providerName}: $e');
+      debugPrint('AIGrammarService: Error with ${_currentProvider!.providerName}: $e');
       return GrammarCorrectionResult(
         originalText: text,
         correctedText: text,
@@ -323,7 +335,8 @@ class AIGrammarService {
   }
 
   void dispose() {
-    _currentProvider.dispose();
+    _currentProvider?.dispose();
+    _currentProvider = null;
   }
 }
 

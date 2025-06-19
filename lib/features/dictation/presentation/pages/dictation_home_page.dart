@@ -8,6 +8,10 @@ import 'package:dictation_app/features/overlay/presentation/bloc/overlay_bloc.da
 import 'package:dictation_app/features/overlay/presentation/bloc/overlay_event.dart';
 import 'package:dictation_app/features/overlay/presentation/bloc/overlay_state.dart' as overlay_state;
 import 'package:dictation_app/features/overlay/domain/entities/overlay_config.dart';
+import 'package:dictation_app/features/settings/presentation/pages/settings_page.dart';
+import 'package:dictation_app/core/services/ai_grammar_service.dart';
+import 'package:dictation_app/core/services/hybrid_grammar_provider.dart';
+import 'package:dictation_app/core/dependency_injection.dart';
 
 class DictationHomePage extends StatefulWidget {
   const DictationHomePage({super.key});
@@ -19,6 +23,44 @@ class DictationHomePage extends StatefulWidget {
 class _DictationHomePageState extends State<DictationHomePage> {
   final TextEditingController _textController = TextEditingController();
   bool _isListening = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupFallbackListener();
+  }
+
+  void _setupFallbackListener() {
+    // Setup fallback notification listener for hybrid provider
+    try {
+      final aiService = getIt<AIGrammarService>();
+      final provider = aiService.currentProvider;
+      if (provider is HybridGrammarProvider) {
+        provider.setFallbackCallback((message, isWarning) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Row(
+                  children: [
+                    Icon(
+                      isWarning ? Icons.warning : Icons.info,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(message)),
+                  ],
+                ),
+                backgroundColor: isWarning ? Colors.orange : Colors.blue,
+                duration: Duration(seconds: isWarning ? 5 : 3),
+              ),
+            );
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error setting up fallback listener: $e');
+    }
+  }
 
   @override
   void dispose() {
@@ -86,12 +128,30 @@ class _DictationHomePageState extends State<DictationHomePage> {
     context.read<OverlayBloc>().add(HideOverlayEvent());
   }
 
+  void _openSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const SettingsPage(),
+      ),
+    ).then((_) {
+      // Refresh fallback listener in case settings changed
+      _setupFallbackListener();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Dictation App'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _openSettings,
+            tooltip: 'Grammar Correction Settings',
+          ),
+        ],
       ),
       body: MultiBlocListener(
         listeners: [

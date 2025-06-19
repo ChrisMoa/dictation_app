@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
+import 'package:dictation_app/core/services/settings_service.dart';
 import 'package:dictation_app/features/dictation/presentation/pages/dictation_home_page.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_bloc.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_event.dart';
@@ -25,6 +26,12 @@ void main() async {
   
   try {
     await setupDependencyInjection();
+    
+    // Initialize settings service
+    final settingsService = getIt<SettingsService>();
+    await settingsService.initialize();
+    debugPrint('Main: Settings service initialized');
+    
   } catch (e) {
     debugPrint('Error setting up dependencies: $e');
   }

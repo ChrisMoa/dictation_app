@@ -26,6 +26,9 @@ dependencies:
   flutter_background_service: ^5.0.5
   device_info_plus: ^11.4.0
   
+  # Settings
+  shared_preferences: ^2.3.3
+  
   # Dependency Injection
   logger: ^2.0.2+1
 
