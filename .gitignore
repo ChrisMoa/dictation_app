@@ -12,6 +12,7 @@
 .swiftpm/
 migrate_working_dir/
 
+
 # IntelliJ related
 *.iml
 *.ipr
@@ -70,3 +71,16 @@ assets/spell_check_model.tflite
 # models 
 python/german_gec_mt5
 assets/models
+
+# python model training
+*.json
+*.onnx
+*.tflite
+*.safetensors
+*.pt 
+*.pth
+*.model 
+*.bin
+*.pb
+*.data*
+*.index 
