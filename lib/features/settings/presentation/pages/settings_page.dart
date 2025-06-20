@@ -22,13 +22,17 @@ class _SettingsPageState extends State<SettingsPage> {
   String _serverUrl = '';
   String _ollamaUrl = '';
   String _ollamaModel = '';
+  String _ollamaPrompt = '';
   bool _isServerHealthy = false;
   bool _isOllamaHealthy = false;
   bool _isCheckingHealth = false;
+  bool _isLoadingModels = false;
+  List<String> _availableModels = [];
   
   final TextEditingController _serverUrlController = TextEditingController();
   final TextEditingController _ollamaUrlController = TextEditingController();
   final TextEditingController _ollamaModelController = TextEditingController();
+  final TextEditingController _ollamaPromptController = TextEditingController();
 
   @override
   void initState() {
@@ -44,11 +48,16 @@ class _SettingsPageState extends State<SettingsPage> {
       _serverUrl = _settingsService.serverUrl;
       _ollamaUrl = _settingsService.ollamaUrl;
       _ollamaModel = _settingsService.ollamaModel;
+      _ollamaPrompt = _settingsService.ollamaPrompt;
       _serverUrlController.text = _serverUrl;
       _ollamaUrlController.text = _ollamaUrl;
       _ollamaModelController.text = _ollamaModel;
+      _ollamaPromptController.text = _ollamaPrompt;
     });
     _checkServerHealth();
+    if (_shouldShowOllamaSettings()) {
+      _loadAvailableModels();
+    }
   }
 
   Future<void> _checkServerHealth() async {
@@ -119,6 +128,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _updateOllamaConfig() async {
     final newUrl = _ollamaUrlController.text.trim();
     final newModel = _ollamaModelController.text.trim();
+    final newPrompt = _ollamaPromptController.text.trim();
     
     if (newUrl.isEmpty) {
       _showSnackBar('Ollama URL cannot be empty', isError: true);
@@ -130,22 +140,44 @@ class _SettingsPageState extends State<SettingsPage> {
       return;
     }
 
+    if (newPrompt.isEmpty) {
+      _showSnackBar('Ollama prompt cannot be empty', isError: true);
+      return;
+    }
+
+    if (!newPrompt.contains('{TEXT}')) {
+      _showSnackBar('Prompt must contain {TEXT} placeholder', isError: true);
+      return;
+    }
+
     await _settingsService.setOllamaUrl(newUrl);
     await _settingsService.setOllamaModel(newModel);
+    await _settingsService.setOllamaPrompt(newPrompt);
     
     setState(() {
       _ollamaUrl = newUrl;
       _ollamaModel = newModel;
+      _ollamaPrompt = newPrompt;
     });
 
     // Update the hybrid provider with new Ollama config
     final provider = _aiGrammarService.currentProvider;
     if (provider is HybridGrammarProvider) {
-      provider.updateOllamaConfig(newUrl, newModel);
+      provider.updateOllamaConfig(newUrl, newModel, newPrompt: newPrompt);
       _checkServerHealth();
     }
 
     _showSnackBar('Ollama configuration updated successfully');
+  }
+
+  void _resetPromptToDefault() {
+    const defaultPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}';
+    
+    setState(() {
+      _ollamaPromptController.text = defaultPrompt;
+    });
+    
+    _showSnackBar('Prompt reset to default');
   }
 
   Future<void> _testOllamaConnection() async {
@@ -170,10 +202,12 @@ class _SettingsPageState extends State<SettingsPage> {
     });
 
     try {
-      debugPrint('Creating test Ollama provider with URL: $url, Model: $model');
+      final prompt = _ollamaPromptController.text.trim();
+      debugPrint('Creating test Ollama provider with URL: $url, Model: $model, Prompt: ${prompt.substring(0, prompt.length > 50 ? 50 : prompt.length)}...');
       final testProvider = OllamaGrammarProvider(
         ollamaUrl: url,
         modelName: model,
+        customPrompt: prompt.isNotEmpty ? prompt : _settingsService.ollamaPrompt,
       );
 
       debugPrint('Testing Ollama health check...');
@@ -391,22 +425,145 @@ class _SettingsPageState extends State<SettingsPage> {
                 hintText: 'http://localhost:11434',
                 border: OutlineInputBorder(),
                 helperText: 'Full URL including protocol (http/https) and port',
+                suffixIcon: IconButton(
+                  icon: Icon(Icons.refresh),
+                  onPressed: _loadAvailableModels,
+                  tooltip: 'Refresh available models',
+                ),
               ),
+              onChanged: (value) {
+                // Auto-load models when URL changes
+                if (value.trim().isNotEmpty) {
+                  Future.delayed(Duration(milliseconds: 500), () {
+                    if (value == _ollamaUrlController.text) {
+                      _loadAvailableModels();
+                    }
+                  });
+                }
+              },
             ),
             const SizedBox(height: 16),
+            if (_isLoadingModels) ...[
+              Row(
+                children: [
+                  SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('Loading available models...'),
+                ],
+              ),
+              const SizedBox(height: 16),
+            ],
+            if (_availableModels.isNotEmpty) ...[
+              Text(
+                'Available Models',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: DropdownButtonFormField<String>(
+                  value: _availableModels.contains(_ollamaModel) ? _ollamaModel : null,
+                  decoration: InputDecoration(
+                    labelText: 'Select Model',
+                    border: InputBorder.none,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  items: _availableModels.map((model) {
+                    return DropdownMenuItem<String>(
+                      value: model,
+                      child: Text(model),
+                    );
+                  }).toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      _ollamaModelController.text = value;
+                      _updateOllamaConfig();
+                    }
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
             TextField(
               controller: _ollamaModelController,
               decoration: InputDecoration(
                 labelText: 'Ollama Model Name',
                 hintText: 'llama3.2:3b',
                 border: OutlineInputBorder(),
-                helperText: 'Exact model name as shown in "ollama list"',
+                helperText: _availableModels.isNotEmpty 
+                    ? 'Or type a custom model name'
+                    : 'Exact model name as shown in "ollama list"',
                 suffixIcon: IconButton(
                   icon: Icon(Icons.save),
                   onPressed: _updateOllamaConfig,
                 ),
               ),
               onSubmitted: (_) => _updateOllamaConfig(),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _ollamaPromptController,
+              decoration: InputDecoration(
+                labelText: 'Custom Prompt',
+                hintText: 'Schreib den folgenden Text mit korrekter deutscher Grammatik...',
+                border: OutlineInputBorder(),
+                helperText: 'Use {TEXT} as placeholder for the input text',
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.restore),
+                      onPressed: _resetPromptToDefault,
+                      tooltip: 'Reset to default prompt',
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.save),
+                      onPressed: _updateOllamaConfig,
+                      tooltip: 'Save prompt',
+                    ),
+                  ],
+                ),
+              ),
+              maxLines: 3,
+              onSubmitted: (_) => _updateOllamaConfig(),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.blue.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Prompt Guidelines:',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue[700],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '• Must contain {TEXT} placeholder\n'
+                    '• Be specific about output format\n'
+                    '• Request only corrected text without explanations\n'
+                    '• Works best with German grammar correction',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.blue[600],
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 16),
             Row(
@@ -430,7 +587,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: _isOllamaHealthy ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
+                color: _isOllamaHealthy ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: _isOllamaHealthy ? Colors.green : Colors.red,
@@ -472,6 +629,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       'Model: ${_ollamaModelController.text.isNotEmpty ? _ollamaModelController.text : 'Not configured'}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
+                    if (_availableModels.isNotEmpty)
+                      Text(
+                        'Available: ${_availableModels.length} models',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                   ],
                 ],
               ),
@@ -549,6 +711,36 @@ class _SettingsPageState extends State<SettingsPage> {
         return 'Try FastAPI server first, fallback to local if server unavailable.';
       case GrammarCorrectionMode.hybridOllama:
         return 'Try Ollama first, fallback to local if Ollama unavailable.';
+    }
+  }
+
+  Future<void> _loadAvailableModels() async {
+    final url = _ollamaUrlController.text.trim();
+    if (url.isEmpty) return;
+    
+    setState(() {
+      _isLoadingModels = true;
+    });
+    
+    try {
+      final testProvider = OllamaGrammarProvider(
+        ollamaUrl: url,
+        modelName: 'dummy', // We just need the URL for fetching models
+      );
+      
+      final models = await testProvider.getAvailableModels();
+      setState(() {
+        _availableModels = models;
+        _isLoadingModels = false;
+      });
+      
+      debugPrint('Loaded ${models.length} available models: $models');
+    } catch (e) {
+      debugPrint('Failed to load models: $e');
+      setState(() {
+        _availableModels = [];
+        _isLoadingModels = false;
+      });
     }
   }
 

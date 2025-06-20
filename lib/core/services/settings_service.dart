@@ -14,10 +14,12 @@ class SettingsService {
   static const String _serverUrlKey = 'grammar_server_url';
   static const String _ollamaUrlKey = 'ollama_server_url';
   static const String _ollamaModelKey = 'ollama_model_name';
+  static const String _ollamaPromptKey = 'ollama_custom_prompt';
   
   static const String _defaultServerUrl = 'http://localhost:8000';
   static const String _defaultOllamaUrl = 'http://localhost:11434';
-  static const String _defaultOllamaModel = 'llama3.2:3b';
+  static const String _defaultOllamaModel = 'gemma3:1b';
+  static const String _defaultOllamaPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}';
 
   late SharedPreferences _prefs;
   bool _isInitialized = false;
@@ -148,6 +150,30 @@ class SettingsService {
     }
   }
 
+  /// Get the custom Ollama prompt
+  String get ollamaPrompt {
+    if (!_isInitialized) {
+      return _defaultOllamaPrompt;
+    }
+
+    return _prefs.getString(_ollamaPromptKey) ?? _defaultOllamaPrompt;
+  }
+
+  /// Set the custom Ollama prompt
+  Future<void> setOllamaPrompt(String prompt) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Ollama prompt');
+      return;
+    }
+
+    try {
+      await _prefs.setString(_ollamaPromptKey, prompt.trim());
+      debugPrint('SettingsService: Ollama prompt set (${prompt.length} chars)');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Ollama prompt: $e');
+    }
+  }
+
   /// Check if settings are initialized
   bool get isInitialized => _isInitialized;
 
@@ -160,6 +186,7 @@ class SettingsService {
       await _prefs.remove(_serverUrlKey);
       await _prefs.remove(_ollamaUrlKey);
       await _prefs.remove(_ollamaModelKey);
+      await _prefs.remove(_ollamaPromptKey);
       debugPrint('SettingsService: Settings reset to defaults');
     } catch (e) {
       debugPrint('SettingsService: Failed to reset settings: $e');

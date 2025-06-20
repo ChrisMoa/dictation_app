@@ -152,6 +152,17 @@ class _DictationHomePageState extends State<DictationHomePage> {
             tooltip: 'Grammar Correction Settings',
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(4.0),
+          child: BlocBuilder<DictationBloc, DictationState>(
+            builder: (context, state) {
+              if (state is DictationLoading || state is SpellCheckLoading) {
+                return const LinearProgressIndicator(minHeight: 4.0);
+              }
+              return const SizedBox(height: 4.0);
+            },
+          ),
+        ),
       ),
       body: MultiBlocListener(
         listeners: [
@@ -159,6 +170,9 @@ class _DictationHomePageState extends State<DictationHomePage> {
             listener: (context, state) {
               if (state is DictationListening) {
                 _textController.text = state.currentText + state.partialText;
+                setState(() {
+                  _isListening = true;
+                });
               } else if (state is DictationStopped) {
                 _textController.text = state.finalText;
                 setState(() {
@@ -259,12 +273,12 @@ class _DictationHomePageState extends State<DictationHomePage> {
               const SizedBox(height: 16),
               BlocBuilder<DictationBloc, DictationState>(
                 builder: (context, state) {
+                  final isLoading = state is DictationLoading || state is SpellCheckLoading;
                   return Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       ElevatedButton.icon(
-                        onPressed: state is DictationLoading ? null : 
-                                  _isListening ? _stopDictation : _startDictation,
+                        onPressed: isLoading ? null : (_isListening ? _stopDictation : _startDictation),
                         icon: Icon(_isListening ? Icons.stop : Icons.mic),
                         label: Text(_isListening ? 'Stop' : 'Start'),
                         style: ElevatedButton.styleFrom(
@@ -273,7 +287,7 @@ class _DictationHomePageState extends State<DictationHomePage> {
                         ),
                       ),
                       ElevatedButton.icon(
-                        onPressed: _clearText,
+                        onPressed: isLoading ? null : _clearText,
                         icon: const Icon(Icons.clear),
                         label: const Text('Clear'),
                       ),

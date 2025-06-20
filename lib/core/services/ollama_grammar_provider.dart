@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
 
@@ -10,6 +11,7 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
   final String ollamaUrl;
   final String modelName;
   final Duration timeout;
+  final String customPrompt;
   
   static const Duration _defaultTimeout = Duration(seconds: 30);
   static const String _generateEndpoint = '/api/generate';
@@ -19,6 +21,7 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
     required this.ollamaUrl,
     required this.modelName,
     this.timeout = _defaultTimeout,
+    this.customPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}',
   }) {
     // Enhanced initialization logging
     debugPrint('=== OllamaGrammarProvider Initialization ===');
@@ -32,7 +35,47 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
   }
 
   @override
-  String get providerName => 'Ollama $modelName GEC';
+  String get providerName => 'Ollama $modelName';
+
+  /// Fetch available models from Ollama server
+  Future<List<String>> getAvailableModels() async {
+    debugPrint('OllamaGrammarProvider: Fetching available models from $ollamaUrl');
+    
+    try {
+      final uri = Uri.parse('$ollamaUrl$_tagsEndpoint');
+      debugPrint('OllamaGrammarProvider: GET URL: $uri');
+      
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+      ).timeout(Duration(seconds: 10));
+
+      debugPrint('OllamaGrammarProvider: GET response status: ${response.statusCode}');
+      debugPrint('OllamaGrammarProvider: GET response body: ${response.body}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final models = data['models'] as List<dynamic>? ?? [];
+        
+        final modelNames = models.map((model) {
+          final modelData = model as Map<String, dynamic>;
+          return modelData['name'] as String? ?? '';
+        }).where((name) => name.isNotEmpty).toList();
+        
+        debugPrint('OllamaGrammarProvider: Found ${modelNames.length} available models: $modelNames');
+        return modelNames;
+      } else {
+        debugPrint('OllamaGrammarProvider: Failed to fetch models: ${response.statusCode}');
+        return [];
+      }
+    } catch (e) {
+      debugPrint('OllamaGrammarProvider: Error fetching models: $e');
+      return [];
+    }
+  }
 
   /// Check if Ollama server is reachable and model is available
   Future<bool> isServerHealthy() async {
@@ -133,7 +176,7 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
     debugPrint('=== Ollama Text Correction Start ===');
     debugPrint('OllamaGrammarProvider: Starting Ollama correction');
     debugPrint('OllamaGrammarProvider: Text length: ${text.length}');
-    debugPrint('OllamaGrammarProvider: Text preview: "${text.length > 100 ? text.substring(0, 100) + '...' : text}"');
+    debugPrint('OllamaGrammarProvider: Text preview: "${text.length > 100 ? '${text.substring(0, 100)}...' : text}"');
     debugPrint('OllamaGrammarProvider: Using model: $modelName');
     debugPrint('OllamaGrammarProvider: Server URL: $ollamaUrl');
     
@@ -182,27 +225,20 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
     final uri = Uri.parse('$ollamaUrl$_generateEndpoint');
     debugPrint('OllamaGrammarProvider: POST URL: $uri');
     
-    final prompt = '''Prüfe die Rechtschreibung, Grammatik und die Wörter von dem folgenden deutschen Satz und korrigiere alle Fehler. Gib nur den korrigierten Satz zurück, ohne weitere Erklärungen oder Kommentare:
-
-"$text"
-
-Korrigierter Satz:''';
+    // Use configurable prompt with text replacement
+    final prompt = customPrompt.replaceAll('{TEXT}', text);
 
     final requestData = {
       'model': modelName,
       'prompt': prompt,
       'stream': false,
-      'options': {
-        'temperature': 0.1, // Low temperature for consistent corrections
-        'top_p': 0.9,
-        'num_predict': 256, // Changed from max_tokens to num_predict for Ollama
-      },
+      // Simple options like Python version (no complex configurations)
     };
 
     final requestBody = json.encode(requestData);
 
     debugPrint('OllamaGrammarProvider: Request model: $modelName');
-    debugPrint('OllamaGrammarProvider: Request prompt preview: "${prompt.length > 200 ? prompt.substring(0, 200) + '...' : prompt}"');
+    debugPrint('OllamaGrammarProvider: Request prompt preview: "${prompt.length > 200 ? '${prompt.substring(0, 200)}...' : prompt}"');
     debugPrint('OllamaGrammarProvider: Request body size: ${requestBody.length} bytes');
     debugPrint('OllamaGrammarProvider: Full request body: $requestBody');
     
@@ -233,7 +269,7 @@ Korrigierter Satz:''';
           debugPrint('OllamaGrammarProvider: Raw response text: "$correctedText"');
           
           // Clean up the response to extract just the corrected sentence
-          correctedText = _cleanOllamaResponse(correctedText, text);
+          correctedText = cleanOllamaResponse(correctedText, text);
           debugPrint('OllamaGrammarProvider: Cleaned response text: "$correctedText"');
           debugPrint('=== Ollama Correction Request End: SUCCESS ===');
           
@@ -255,68 +291,38 @@ Korrigierter Satz:''';
     }
   }
 
-  /// Clean up Ollama response to extract the corrected text
-  String _cleanOllamaResponse(String response, String originalText) {
-    // Remove common prefixes that Ollama might add
-    final cleanPatterns = [
-      r'Korrigierter Satz:\s*',
-      r'Korrigiert:\s*',
-      r'Antwort:\s*',
-      r'Korrekt:\s*',
-      r'"([^"]*)"', // Extract text from quotes
-    ];
+  /// Clean up Ollama response to extract the corrected text (simplified like Python)
+  @visibleForTesting
+  String cleanOllamaResponse(String response, String originalText) {
+    debugPrint('OllamaGrammarProvider: Cleaning response: "$response"');
+    debugPrint('OllamaGrammarProvider: Original text: "$originalText"');
     
     String cleaned = response.trim();
     
-    for (String pattern in cleanPatterns) {
-      final regex = RegExp(pattern, caseSensitive: false);
-      final match = regex.firstMatch(cleaned);
-      if (match != null) {
-        if (match.groupCount > 0 && match.group(1) != null) {
-          // If there's a capture group (quotes), use that
-          cleaned = match.group(1)!.trim();
-        } else {
-          // Otherwise, remove the matched prefix
-          cleaned = cleaned.replaceFirst(regex, '').trim();
-        }
-        break;
-      }
-    }
+    // Simple cleaning - just remove obvious prefixes like "Hier ist der korrigierte Text:"
+    cleaned = cleaned.replaceAll(RegExp(r'^(Hier ist der korrigierte Text|Der korrigierte Text lautet|Korrigiert|Korrektur):\s*', caseSensitive: false, multiLine: true), '');
     
-    // If the cleaned response is empty or looks wrong, return original
-    if (cleaned.isEmpty || cleaned.length < originalText.length * 0.3) {
-      return originalText;
-    }
-    
-    // Remove quotes if they wrap the entire response
+    // Remove quotes if they wrap the entire text
     if (cleaned.startsWith('"') && cleaned.endsWith('"')) {
       cleaned = cleaned.substring(1, cleaned.length - 1).trim();
     }
     
+    // Simple validation - if it's too short or empty, return original
+    if (cleaned.isEmpty || cleaned.length < originalText.length * 0.3) {
+      debugPrint('OllamaGrammarProvider: Cleaned text too short, returning original');
+      return originalText;
+    }
+    
+    debugPrint('OllamaGrammarProvider: Final cleaned response: "$cleaned"');
     return cleaned;
   }
 
-  /// Calculate confidence based on text changes
+  /// Calculate confidence based on text changes (simplified)
   double _calculateConfidence(String original, String corrected) {
     if (original == corrected) return 1.0;
     
-    // Simple confidence calculation based on similarity
-    final originalWords = original.toLowerCase().split(' ');
-    final correctedWords = corrected.toLowerCase().split(' ');
-    
-    int matchingWords = 0;
-    final minLength = originalWords.length < correctedWords.length 
-        ? originalWords.length 
-        : correctedWords.length;
-    
-    for (int i = 0; i < minLength; i++) {
-      if (originalWords[i] == correctedWords[i]) {
-        matchingWords++;
-      }
-    }
-    
-    // High confidence for Ollama corrections
-    return 0.85 + (matchingWords / originalWords.length) * 0.15;
+    // Simple confidence - high confidence since gemma3:1b with simple prompt works well
+    return 0.9;
   }
 
   /// Generate grammar errors by comparing original and corrected text

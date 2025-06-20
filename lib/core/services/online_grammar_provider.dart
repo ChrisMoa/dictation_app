@@ -108,12 +108,17 @@ class OnlineGrammarProvider implements GrammarCorrectionProvider {
   Future<String> _performOnlineCorrection(String text) async {
     final uri = Uri.parse('$serverUrl$_correctEndpoint');
     
+    // Increase max_length to handle longer texts properly
+    final maxLength = text.length > 200 ? text.length + 50 : 512;
+    
     final requestBody = json.encode({
       'text': text,
-      'max_length': 64,
+      'max_length': maxLength,
     });
 
     debugPrint('OnlineGrammarProvider: Sending request to $uri');
+    debugPrint('OnlineGrammarProvider: Original text length: ${text.length}');
+    debugPrint('OnlineGrammarProvider: Using max_length: $maxLength');
     debugPrint('OnlineGrammarProvider: Request body: $requestBody');
     
     final response = await http.post(
@@ -134,6 +139,7 @@ class OnlineGrammarProvider implements GrammarCorrectionProvider {
       
       debugPrint('OnlineGrammarProvider: Server response successful');
       debugPrint('OnlineGrammarProvider: Processing time: ${data['processing_time']}s');
+      debugPrint('OnlineGrammarProvider: Corrected text length: ${correctedText.length}');
       
       return correctedText.trim();
       

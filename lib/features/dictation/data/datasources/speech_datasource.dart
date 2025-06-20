@@ -112,11 +112,26 @@ class SpeechDatasourceImpl implements SpeechDatasource {
       ),
     );
     
-    // Set up a safety timer to restart listening if no results come in
+    // Set up multiple safety mechanisms
+    _setupSafetyTimers();
+  }
+  
+  void _setupSafetyTimers() {
     _restartTimer?.cancel();
-    _restartTimer = Timer(const Duration(seconds: 8), () {
-      if (_shouldKeepListening && speechToText.isListening) {
-        debugPrint('SpeechDatasource: Safety timeout reached, restarting listening');
+    
+    // Safety timer 1: Check if still listening every 10 seconds
+    _restartTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+      if (!_shouldKeepListening) {
+        timer.cancel();
+        return;
+      }
+      
+      debugPrint('SpeechDatasource: Periodic check - isListening: ${speechToText.isListening}, shouldKeepListening: $_shouldKeepListening');
+      
+      // If we should be listening but aren't, restart
+      if (_shouldKeepListening && !speechToText.isListening) {
+        debugPrint('SpeechDatasource: Periodic check detected listening stopped, restarting...');
+        timer.cancel();
         _restartListening();
       }
     });
@@ -158,11 +173,17 @@ class SpeechDatasourceImpl implements SpeechDatasource {
   Future<void> stopListening() async {
     debugPrint('SpeechDatasource: Stopping listening');
     _shouldKeepListening = false;
+    
+    // Cancel all timers
     _restartTimer?.cancel();
     _restartTimer = null;
     
-    if (speechToText.isListening) {
-      await speechToText.stop();
+    try {
+      if (speechToText.isListening) {
+        await speechToText.stop();
+      }
+    } catch (e) {
+      debugPrint('SpeechDatasource: Error stopping speech recognition: $e');
     }
     
     await _streamController?.close();
@@ -172,9 +193,11 @@ class SpeechDatasourceImpl implements SpeechDatasource {
 
   @override
   Future<bool> isListening() async {
-    final listening = speechToText.isListening;
-    debugPrint('SpeechDatasource: Is listening: $listening');
-    return listening;
+    // Return true if we should be listening (even if temporarily paused)
+    final shouldListen = _shouldKeepListening;
+    final actuallyListening = speechToText.isListening;
+    debugPrint('SpeechDatasource: Should be listening: $shouldListen, Actually listening: $actuallyListening');
+    return shouldListen;
   }
 
   @override

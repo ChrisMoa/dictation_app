@@ -39,11 +39,13 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
     // Initialize Ollama provider
     final ollamaUrl = _settingsService.ollamaUrl;
     final ollamaModel = _settingsService.ollamaModel;
+    final ollamaPrompt = _settingsService.ollamaPrompt;
     _ollamaProvider = OllamaGrammarProvider(
       ollamaUrl: ollamaUrl,
       modelName: ollamaModel,
+      customPrompt: ollamaPrompt,
     );
-    debugPrint('HybridGrammarProvider: Initialized Ollama with URL: $ollamaUrl, Model: $ollamaModel');
+    debugPrint('HybridGrammarProvider: Initialized Ollama with URL: $ollamaUrl, Model: $ollamaModel, Prompt: ${ollamaPrompt.substring(0, ollamaPrompt.length > 50 ? 50 : ollamaPrompt.length)}...');
   }
 
   @override
@@ -72,10 +74,11 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
   }
 
   /// Update Ollama configuration and reinitialize provider
-  void updateOllamaConfig(String newUrl, String newModel) {
+  void updateOllamaConfig(String newUrl, String newModel, {String? newPrompt}) {
     _ollamaProvider = OllamaGrammarProvider(
       ollamaUrl: newUrl,
       modelName: newModel,
+      customPrompt: newPrompt ?? _settingsService.ollamaPrompt,
     );
     _lastOllamaHealthy = false;
     _lastOllamaHealthCheck = null;
@@ -116,22 +119,43 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
 
   @override
   Future<GrammarCorrectionResult> correctText(String text) async {
+    debugPrint('=== Hybrid Grammar Correction Start ===');
     debugPrint('HybridGrammarProvider: Starting correction with mode: ${_settingsService.grammarCorrectionMode.name}');
+    debugPrint('HybridGrammarProvider: Input text length: ${text.length}');
+    debugPrint('HybridGrammarProvider: Input text preview: "${text.length > 100 ? text.substring(0, 100) + '...' : text}"');
     
     final mode = _settingsService.grammarCorrectionMode;
     
+    GrammarCorrectionResult result;
+    
     switch (mode) {
       case GrammarCorrectionMode.onlineOnly:
-        return await _correctOnlineOnly(text);
+        result = await _correctOnlineOnly(text);
+        break;
       case GrammarCorrectionMode.offlineOnly:
-        return await _correctOfflineOnly(text);
+        result = await _correctOfflineOnly(text);
+        break;
       case GrammarCorrectionMode.ollamaOnly:
-        return await _correctOllamaOnly(text);
+        result = await _correctOllamaOnly(text);
+        break;
       case GrammarCorrectionMode.hybrid:
-        return await _correctHybridFastAPI(text);
+        result = await _correctHybridFastAPI(text);
+        break;
       case GrammarCorrectionMode.hybridOllama:
-        return await _correctHybridOllama(text);
+        result = await _correctHybridOllama(text);
+        break;
     }
+    
+    debugPrint('=== Hybrid Grammar Correction End ===');
+    debugPrint('HybridGrammarProvider: Final result:');
+    debugPrint('HybridGrammarProvider: - Method: ${result.correctionMethod}');
+    debugPrint('HybridGrammarProvider: - Confidence: ${result.confidence}');
+    debugPrint('HybridGrammarProvider: - Has corrections: ${result.hasCorrections}');
+    debugPrint('HybridGrammarProvider: - Errors found: ${result.errors.length}');
+    debugPrint('HybridGrammarProvider: - Original: "${result.originalText}"');
+    debugPrint('HybridGrammarProvider: - Corrected: "${result.correctedText}"');
+    
+    return result;
   }
 
   /// Online-only correction using FastAPI
@@ -144,6 +168,7 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
       throw Exception('Server not reachable and offline mode disabled');
     }
     
+    debugPrint('HybridGrammarProvider: FastAPI server is healthy, proceeding with correction');
     return await _onlineProvider!.correctText(text);
   }
 
@@ -157,6 +182,7 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
       throw Exception('Ollama not reachable and offline mode disabled');
     }
     
+    debugPrint('HybridGrammarProvider: Ollama is healthy, proceeding with correction');
     return await _ollamaProvider!.correctText(text);
   }
 
@@ -173,7 +199,7 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
     try {
       final isHealthy = await _checkServerHealth();
       if (isHealthy) {
-        debugPrint('HybridGrammarProvider: Trying FastAPI server first');
+        debugPrint('HybridGrammarProvider: FastAPI server is healthy, trying online correction first');
         return await _onlineProvider!.correctText(text);
       } else {
         debugPrint('HybridGrammarProvider: FastAPI server not available, falling back to offline');
@@ -194,7 +220,7 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
     try {
       final isHealthy = await _checkOllamaHealth();
       if (isHealthy) {
-        debugPrint('HybridGrammarProvider: Trying Ollama first');
+        debugPrint('HybridGrammarProvider: Ollama is healthy, trying Ollama correction first');
         return await _ollamaProvider!.correctText(text);
       } else {
         debugPrint('HybridGrammarProvider: Ollama not available, falling back to offline');
