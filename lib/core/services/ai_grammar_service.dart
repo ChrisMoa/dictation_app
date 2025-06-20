@@ -45,9 +45,9 @@ class OfflineGECProvider implements GrammarCorrectionProvider {
         debugPrint('OfflineGECProvider: Text is long, using segmented processing');
         return await _processLongTextInSegments(text);
       }
-      
+
       final gecResult = await _gecService.correctText(text);
-      
+
       return GrammarCorrectionResult(
         originalText: text,
         correctedText: gecResult.correctedText,

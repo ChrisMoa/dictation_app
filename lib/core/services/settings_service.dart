@@ -4,13 +4,20 @@ import 'package:shared_preferences/shared_preferences.dart';
 enum GrammarCorrectionMode {
   onlineOnly,
   offlineOnly,
-  hybrid, // Try online first, fallback to offline
+  ollamaOnly,    // New: Ollama only mode
+  hybrid,        // Try online first, fallback to offline
+  hybridOllama,  // Try Ollama first, fallback to offline
 }
 
 class SettingsService {
   static const String _grammarModeKey = 'grammar_correction_mode';
   static const String _serverUrlKey = 'grammar_server_url';
+  static const String _ollamaUrlKey = 'ollama_server_url';
+  static const String _ollamaModelKey = 'ollama_model_name';
+  
   static const String _defaultServerUrl = 'http://localhost:8000';
+  static const String _defaultOllamaUrl = 'http://localhost:11434';
+  static const String _defaultOllamaModel = 'llama3.2:3b';
 
   late SharedPreferences _prefs;
   bool _isInitialized = false;
@@ -37,6 +44,10 @@ class SettingsService {
     }
 
     final modeIndex = _prefs.getInt(_grammarModeKey) ?? GrammarCorrectionMode.hybrid.index;
+    // Ensure the index is valid for current enum values
+    if (modeIndex >= GrammarCorrectionMode.values.length) {
+      return GrammarCorrectionMode.hybrid;
+    }
     return GrammarCorrectionMode.values[modeIndex];
   }
 
@@ -84,6 +95,59 @@ class SettingsService {
     }
   }
 
+  /// Get the Ollama server URL
+  String get ollamaUrl {
+    if (!_isInitialized) {
+      return _defaultOllamaUrl;
+    }
+
+    return _prefs.getString(_ollamaUrlKey) ?? _defaultOllamaUrl;
+  }
+
+  /// Set the Ollama server URL
+  Future<void> setOllamaUrl(String url) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Ollama URL');
+      return;
+    }
+
+    try {
+      // Ensure URL format is correct
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'http://$url';
+      }
+      
+      await _prefs.setString(_ollamaUrlKey, url);
+      debugPrint('SettingsService: Ollama URL set to $url');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Ollama URL: $e');
+    }
+  }
+
+  /// Get the Ollama model name
+  String get ollamaModel {
+    if (!_isInitialized) {
+      return _defaultOllamaModel;
+    }
+
+    return _prefs.getString(_ollamaModelKey) ?? _defaultOllamaModel;
+  }
+
+  /// Set the Ollama model name
+  Future<void> setOllamaModel(String modelName) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Ollama model');
+      return;
+    }
+
+    try {
+      await _prefs.setString(_ollamaModelKey, modelName.trim());
+      debugPrint('SettingsService: Ollama model set to $modelName');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Ollama model: $e');
+    }
+  }
+
   /// Check if settings are initialized
   bool get isInitialized => _isInitialized;
 
@@ -94,6 +158,8 @@ class SettingsService {
     try {
       await _prefs.remove(_grammarModeKey);
       await _prefs.remove(_serverUrlKey);
+      await _prefs.remove(_ollamaUrlKey);
+      await _prefs.remove(_ollamaModelKey);
       debugPrint('SettingsService: Settings reset to defaults');
     } catch (e) {
       debugPrint('SettingsService: Failed to reset settings: $e');

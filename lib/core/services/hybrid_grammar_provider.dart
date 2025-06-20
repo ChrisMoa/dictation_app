@@ -1,20 +1,24 @@
 import 'package:flutter/foundation.dart';
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
 import 'package:dictation_app/core/services/online_grammar_provider.dart';
+import 'package:dictation_app/core/services/ollama_grammar_provider.dart';
 import 'package:dictation_app/core/services/settings_service.dart';
 
 /// Callback for notifying about fallback events
 typedef FallbackCallback = void Function(String message, bool isWarning);
 
-/// Hybrid grammar correction provider that tries online first, then falls back to offline
+/// Hybrid grammar correction provider that supports FastAPI, Ollama, and offline modes
 class HybridGrammarProvider implements GrammarCorrectionProvider {
   final SettingsService _settingsService;
   final OfflineGECProvider _offlineProvider;
   OnlineGrammarProvider? _onlineProvider;
+  OllamaGrammarProvider? _ollamaProvider;
   FallbackCallback? _onFallback;
   
   bool _lastServerHealthy = false;
+  bool _lastOllamaHealthy = false;
   DateTime? _lastHealthCheck;
+  DateTime? _lastOllamaHealthCheck;
   static const Duration _healthCheckInterval = Duration(minutes: 5);
 
   HybridGrammarProvider({
@@ -23,13 +27,23 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
   }) : _settingsService = settingsService,
        _offlineProvider = OfflineGECProvider(),
        _onFallback = onFallback {
-    _initializeOnlineProvider();
+    _initializeProviders();
   }
 
-  void _initializeOnlineProvider() {
+  void _initializeProviders() {
+    // Initialize FastAPI provider
     final serverUrl = _settingsService.serverUrl;
     _onlineProvider = OnlineGrammarProvider(serverUrl: serverUrl);
-    debugPrint('HybridGrammarProvider: Initialized with server URL: $serverUrl');
+    debugPrint('HybridGrammarProvider: Initialized FastAPI with server URL: $serverUrl');
+    
+    // Initialize Ollama provider
+    final ollamaUrl = _settingsService.ollamaUrl;
+    final ollamaModel = _settingsService.ollamaModel;
+    _ollamaProvider = OllamaGrammarProvider(
+      ollamaUrl: ollamaUrl,
+      modelName: ollamaModel,
+    );
+    debugPrint('HybridGrammarProvider: Initialized Ollama with URL: $ollamaUrl, Model: $ollamaModel');
   }
 
   @override
@@ -40,180 +54,184 @@ class HybridGrammarProvider implements GrammarCorrectionProvider {
         return 'Online Only mT5 GEC';
       case GrammarCorrectionMode.offlineOnly:
         return 'Offline Only mT5 GEC';
+      case GrammarCorrectionMode.ollamaOnly:
+        return 'Ollama Only ${_settingsService.ollamaModel} GEC';
       case GrammarCorrectionMode.hybrid:
-        return 'Hybrid mT5 GEC (Online + Offline)';
+        return 'Hybrid mT5 GEC (FastAPI + Offline)';
+      case GrammarCorrectionMode.hybridOllama:
+        return 'Hybrid Ollama GEC (Ollama + Offline)';
     }
   }
 
   /// Update server URL and reinitialize online provider
   void updateServerUrl(String newUrl) {
-    _initializeOnlineProvider();
-    _lastServerHealthy = false; // Reset health status
+    _onlineProvider = OnlineGrammarProvider(serverUrl: newUrl);
+    _lastServerHealthy = false;
     _lastHealthCheck = null;
     debugPrint('HybridGrammarProvider: Server URL updated to $newUrl');
   }
 
-  /// Set fallback callback for notifications
-  void setFallbackCallback(FallbackCallback callback) {
-    _onFallback = callback;
+  /// Update Ollama configuration and reinitialize provider
+  void updateOllamaConfig(String newUrl, String newModel) {
+    _ollamaProvider = OllamaGrammarProvider(
+      ollamaUrl: newUrl,
+      modelName: newModel,
+    );
+    _lastOllamaHealthy = false;
+    _lastOllamaHealthCheck = null;
+    debugPrint('HybridGrammarProvider: Ollama config updated to URL: $newUrl, Model: $newModel');
   }
 
-  @override
-  Future<GrammarCorrectionResult> correctText(String text) async {
-    final mode = _settingsService.grammarCorrectionMode;
-    
-    debugPrint('HybridGrammarProvider: Starting correction with mode: ${mode.name}');
-    
-    switch (mode) {
-      case GrammarCorrectionMode.offlineOnly:
-        return await _useOfflineOnly(text);
-        
-      case GrammarCorrectionMode.onlineOnly:
-        return await _useOnlineOnly(text);
-        
-      case GrammarCorrectionMode.hybrid:
-        return await _useHybridMode(text);
-    }
+  /// Check if cached health status is still valid
+  bool _isHealthCheckValid(DateTime? lastCheck) {
+    if (lastCheck == null) return false;
+    return DateTime.now().difference(lastCheck) < _healthCheckInterval;
   }
 
-  /// Use offline correction only
-  Future<GrammarCorrectionResult> _useOfflineOnly(String text) async {
-    debugPrint('HybridGrammarProvider: Using offline-only mode');
-    return await _offlineProvider.correctText(text);
-  }
-
-  /// Use online correction only
-  Future<GrammarCorrectionResult> _useOnlineOnly(String text) async {
-    debugPrint('HybridGrammarProvider: Using online-only mode');
-    
-    if (_onlineProvider == null) {
-      throw Exception('Online provider not initialized');
-    }
-
-    // Check server health first
-    if (!await _isServerHealthy()) {
-      _notifyFallback('Server not reachable in online-only mode', true);
-      throw Exception('Server not reachable and offline mode disabled');
-    }
-
-    try {
-      final result = await _onlineProvider!.correctText(text);
-      _notifyFallback('Online correction successful', false);
-      return result;
-    } catch (e) {
-      _notifyFallback('Online correction failed in online-only mode', true);
-      rethrow;
-    }
-  }
-
-  /// Use hybrid mode: try online first, fallback to offline
-  Future<GrammarCorrectionResult> _useHybridMode(String text) async {
-    debugPrint('HybridGrammarProvider: Using hybrid mode');
-    
-    if (_onlineProvider == null) {
-      debugPrint('HybridGrammarProvider: Online provider not initialized, using offline');
-      _notifyFallback('Using offline mode (online provider not configured)', false);
-      return await _offlineProvider.correctText(text);
-    }
-
-    // Check server health
-    if (!await _isServerHealthy()) {
-      debugPrint('HybridGrammarProvider: Server not healthy, using offline fallback');
-      _notifyFallback('Server not reachable, using offline mode', true);
-      return await _offlineProvider.correctText(text);
-    }
-
-    // Try online correction first
-    try {
-      debugPrint('HybridGrammarProvider: Attempting online correction');
-      final result = await _onlineProvider!.correctText(text);
-      debugPrint('HybridGrammarProvider: Online correction successful');
-      return result;
-      
-    } catch (e) {
-      debugPrint('HybridGrammarProvider: Online correction failed: $e, falling back to offline');
-      _notifyFallback('Online correction failed, using offline mode', true);
-      
-      // Fallback to offline
-      try {
-        final result = await _offlineProvider.correctText(text);
-        // Modify the result to indicate it's a fallback
-        return GrammarCorrectionResult(
-          originalText: result.originalText,
-          correctedText: result.correctedText,
-          confidence: result.confidence * 0.9, // Slightly lower confidence for fallback
-          errors: result.errors,
-          correctionMethod: '${result.correctionMethod} (Fallback)',
-        );
-      } catch (offlineError) {
-        debugPrint('HybridGrammarProvider: Both online and offline correction failed');
-        _notifyFallback('Both online and offline correction failed', true);
-        rethrow;
-      }
-    }
-  }
-
-  /// Check if server is healthy with caching
-  Future<bool> _isServerHealthy() async {
-    final now = DateTime.now();
-    
-    // Use cached result if recent
-    if (_lastHealthCheck != null && 
-        now.difference(_lastHealthCheck!) < _healthCheckInterval) {
+  /// Perform health check with caching
+  Future<bool> _checkServerHealth() async {
+    if (_isHealthCheckValid(_lastHealthCheck)) {
       debugPrint('HybridGrammarProvider: Using cached health status: $_lastServerHealthy');
       return _lastServerHealthy;
     }
 
-    // Perform new health check
+    _lastServerHealthy = await _onlineProvider!.isServerHealthy();
+    _lastHealthCheck = DateTime.now();
+    debugPrint('HybridGrammarProvider: Fresh health check result: $_lastServerHealthy');
+    return _lastServerHealthy;
+  }
+
+  /// Perform Ollama health check with caching
+  Future<bool> _checkOllamaHealth() async {
+    if (_isHealthCheckValid(_lastOllamaHealthCheck)) {
+      debugPrint('HybridGrammarProvider: Using cached Ollama health status: $_lastOllamaHealthy');
+      return _lastOllamaHealthy;
+    }
+
+    _lastOllamaHealthy = await _ollamaProvider!.isServerHealthy();
+    _lastOllamaHealthCheck = DateTime.now();
+    debugPrint('HybridGrammarProvider: Fresh Ollama health check result: $_lastOllamaHealthy');
+    return _lastOllamaHealthy;
+  }
+
+  @override
+  Future<GrammarCorrectionResult> correctText(String text) async {
+    debugPrint('HybridGrammarProvider: Starting correction with mode: ${_settingsService.grammarCorrectionMode.name}');
+    
+    final mode = _settingsService.grammarCorrectionMode;
+    
+    switch (mode) {
+      case GrammarCorrectionMode.onlineOnly:
+        return await _correctOnlineOnly(text);
+      case GrammarCorrectionMode.offlineOnly:
+        return await _correctOfflineOnly(text);
+      case GrammarCorrectionMode.ollamaOnly:
+        return await _correctOllamaOnly(text);
+      case GrammarCorrectionMode.hybrid:
+        return await _correctHybridFastAPI(text);
+      case GrammarCorrectionMode.hybridOllama:
+        return await _correctHybridOllama(text);
+    }
+  }
+
+  /// Online-only correction using FastAPI
+  Future<GrammarCorrectionResult> _correctOnlineOnly(String text) async {
+    debugPrint('HybridGrammarProvider: Using online-only mode');
+    
+    final isHealthy = await _checkServerHealth();
+    if (!isHealthy) {
+      debugPrint('HybridGrammarProvider: Server not reachable in online-only mode');
+      throw Exception('Server not reachable and offline mode disabled');
+    }
+    
+    return await _onlineProvider!.correctText(text);
+  }
+
+  /// Ollama-only correction
+  Future<GrammarCorrectionResult> _correctOllamaOnly(String text) async {
+    debugPrint('HybridGrammarProvider: Using Ollama-only mode');
+    
+    final isHealthy = await _checkOllamaHealth();
+    if (!isHealthy) {
+      debugPrint('HybridGrammarProvider: Ollama not reachable in Ollama-only mode');
+      throw Exception('Ollama not reachable and offline mode disabled');
+    }
+    
+    return await _ollamaProvider!.correctText(text);
+  }
+
+  /// Offline-only correction
+  Future<GrammarCorrectionResult> _correctOfflineOnly(String text) async {
+    debugPrint('HybridGrammarProvider: Using offline-only mode');
+    return await _offlineProvider.correctText(text);
+  }
+
+  /// Hybrid correction: FastAPI first, then offline fallback
+  Future<GrammarCorrectionResult> _correctHybridFastAPI(String text) async {
+    debugPrint('HybridGrammarProvider: Using hybrid FastAPI mode');
+    
     try {
-      _lastServerHealthy = await _onlineProvider!.isServerHealthy();
-      _lastHealthCheck = now;
-      debugPrint('HybridGrammarProvider: Fresh health check result: $_lastServerHealthy');
-      return _lastServerHealthy;
+      final isHealthy = await _checkServerHealth();
+      if (isHealthy) {
+        debugPrint('HybridGrammarProvider: Trying FastAPI server first');
+        return await _onlineProvider!.correctText(text);
+      } else {
+        debugPrint('HybridGrammarProvider: FastAPI server not available, falling back to offline');
+        _notifyFallback('FastAPI server not available, using offline mode', false);
+        return await _offlineProvider.correctText(text);
+      }
     } catch (e) {
-      debugPrint('HybridGrammarProvider: Health check failed: $e');
-      _lastServerHealthy = false;
-      _lastHealthCheck = now;
-      return false;
+      debugPrint('HybridGrammarProvider: FastAPI failed: $e, falling back to offline');
+      _notifyFallback('FastAPI correction failed, using offline mode', true);
+      return await _offlineProvider.correctText(text);
+    }
+  }
+
+  /// Hybrid correction: Ollama first, then offline fallback
+  Future<GrammarCorrectionResult> _correctHybridOllama(String text) async {
+    debugPrint('HybridGrammarProvider: Using hybrid Ollama mode');
+    
+    try {
+      final isHealthy = await _checkOllamaHealth();
+      if (isHealthy) {
+        debugPrint('HybridGrammarProvider: Trying Ollama first');
+        return await _ollamaProvider!.correctText(text);
+      } else {
+        debugPrint('HybridGrammarProvider: Ollama not available, falling back to offline');
+        _notifyFallback('Ollama not available, using offline mode', false);
+        return await _offlineProvider.correctText(text);
+      }
+    } catch (e) {
+      debugPrint('HybridGrammarProvider: Ollama failed: $e, falling back to offline');
+      _notifyFallback('Ollama correction failed, using offline mode', true);
+      return await _offlineProvider.correctText(text);
     }
   }
 
   /// Notify about fallback events
   void _notifyFallback(String message, bool isWarning) {
-    debugPrint('HybridGrammarProvider: $message');
     _onFallback?.call(message, isWarning);
   }
 
-  /// Get current provider status
-  Future<Map<String, dynamic>> getProviderStatus() async {
-    final mode = _settingsService.grammarCorrectionMode;
-    
-    if (mode == GrammarCorrectionMode.offlineOnly) {
-      return {
-        'mode': mode.name,
-        'online_available': false,
-        'offline_available': true,
-        'current_provider': 'offline',
-      };
-    }
+  /// Set fallback callback
+  void setFallbackCallback(FallbackCallback callback) {
+    _onFallback = callback;
+  }
 
-    final onlineHealthy = _onlineProvider != null ? await _isServerHealthy() : false;
-    
+  /// Get current provider status for UI
+  Future<Map<String, bool>> getProviderStatus() async {
     return {
-      'mode': mode.name,
-      'online_available': onlineHealthy,
-      'offline_available': true,
-      'current_provider': onlineHealthy && mode != GrammarCorrectionMode.offlineOnly 
-          ? 'online' 
-          : 'offline',
-      'server_url': _settingsService.serverUrl,
+      'fastapi': await _checkServerHealth(),
+      'ollama': await _checkOllamaHealth(),
+      'offline': true, // Always available
     };
   }
 
   @override
   void dispose() {
-    debugPrint('HybridGrammarProvider: Disposing');
+    debugPrint('HybridGrammarProvider: Disposing providers');
     _onlineProvider?.dispose();
+    _ollamaProvider?.dispose();
     _offlineProvider.dispose();
   }
 } 

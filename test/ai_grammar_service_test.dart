@@ -307,11 +307,11 @@ void main() {
 
         expect(result.correctedText, isNotEmpty);
         expect(result.confidence, equals(0.7)); // Even special chars get fallback confidence
-      });
+    });
 
       test('should handle very long text efficiently', () async {
         final input = 'Das ist ein sehr langer deutscher Text. ' * 10; // 400+ characters
-        
+
         final stopwatch = Stopwatch()..start();
         final result = await grammarService.correctGermanText(input);
         stopwatch.stop();
@@ -419,4 +419,4 @@ extension StringExtension on String {
   Iterable<Match> allMatches(String pattern) {
     return RegExp(pattern).allMatches(this);
   }
-}
+} 
