@@ -5,7 +5,9 @@ import 'package:dictation_app/core/services/settings_service.dart';
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
 import 'package:dictation_app/core/services/hybrid_grammar_provider.dart';
 import 'package:dictation_app/core/services/ollama_grammar_provider.dart';
+import 'package:dictation_app/core/services/whisper_download_service.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
+import 'package:path_provider/path_provider.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -19,6 +21,8 @@ class _SettingsPageState extends State<SettingsPage> {
   late AIGrammarService _aiGrammarService;
   
   GrammarCorrectionMode _currentMode = GrammarCorrectionMode.hybrid;
+  SttEngine _currentSttEngine = SttEngine.whisper;
+  WhisperModelSize _currentWhisperModel = WhisperModelSize.base;
   String _serverUrl = '';
   String _ollamaUrl = '';
   String _ollamaModel = '';
@@ -45,6 +49,8 @@ class _SettingsPageState extends State<SettingsPage> {
   void _loadSettings() {
     setState(() {
       _currentMode = _settingsService.grammarCorrectionMode;
+      _currentSttEngine = _settingsService.sttEngine;
+      _currentWhisperModel = _settingsService.whisperModelSize;
       _serverUrl = _settingsService.serverUrl;
       _ollamaUrl = _settingsService.ollamaUrl;
       _ollamaModel = _settingsService.ollamaModel;
@@ -85,6 +91,44 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() {
         _isCheckingHealth = false;
       });
+    }
+  }
+
+  Future<void> _updateSttEngine(SttEngine newEngine) async {
+    await _settingsService.setSttEngine(newEngine);
+    setState(() {
+      _currentSttEngine = newEngine;
+    });
+    
+    // Show dialog to restart app
+    if (mounted) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.restart_alt, color: Colors.orange),
+              SizedBox(width: 8),
+              Text('App-Neustart erforderlich'),
+            ],
+          ),
+          content: Text(
+            'Die STT-Engine wurde auf ${newEngine == SttEngine.whisper ? "Whisper (Offline)" : "Google STT (Online)"} umgestellt.\n\n'
+            'Bitte starte die App neu, damit die Änderung wirksam wird.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                // Close the app
+                Navigator.of(context).pop(); // Close settings
+              },
+              child: const Text('OK - App schließen'),
+            ),
+          ],
+        ),
+      );
     }
   }
 
@@ -320,6 +364,230 @@ class _SettingsPageState extends State<SettingsPage> {
         duration: Duration(seconds: 3),
       ),
     );
+  }
+
+  Widget _buildSttEngineSelector() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.mic, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Speech-to-Text Engine',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            RadioListTile<SttEngine>(
+              title: const Text('Whisper (Offline) - EMPFOHLEN ✅'),
+              subtitle: const Text('Lokales Whisper-Modell. Funktioniert offline. ⚠️ App-Neustart nach Wechsel erforderlich!'),
+              value: SttEngine.whisper,
+              groupValue: _currentSttEngine,
+              onChanged: (value) {
+                if (value != null) {
+                  _updateSttEngine(value);
+                }
+              },
+            ),
+            // Show model selection if Whisper is selected
+            if (_currentSttEngine == SttEngine.whisper) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.only(left: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Whisper Modell-Größe:',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: () => _downloadWhisperModel(),
+                              icon: const Icon(Icons.download, size: 16),
+                              label: const Text('Laden', style: TextStyle(fontSize: 13)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                minimumSize: const Size(0, 32),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    ...WhisperModelSize.values.map((size) {
+                      final info = _getModelInfo(size);
+                      return RadioListTile<WhisperModelSize>(
+                        dense: true,
+                        title: Text(info['title']!),
+                        subtitle: Text(info['subtitle']!),
+                        value: size,
+                        groupValue: _currentWhisperModel,
+                        onChanged: (value) {
+                          if (value != null) {
+                            _updateWhisperModel(value);
+                          }
+                        },
+                      );
+                    }).toList(),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            RadioListTile<SttEngine>(
+              title: const Text('Google Speech-to-Text (Online)'),
+              subtitle: const Text('Google Cloud STT. Benötigt Internet, schnelle Echtzeit-Transkription.'),
+              value: SttEngine.googleStt,
+              groupValue: _currentSttEngine,
+              onChanged: (value) {
+                if (value != null) {
+                  _updateSttEngine(value);
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Map<String, String> _getModelInfo(WhisperModelSize size) {
+    switch (size) {
+      case WhisperModelSize.tiny:
+        return {
+          'title': 'Tiny (~75 MB)',
+          'subtitle': 'Schnell, niedrige Qualität. Gut zum Testen.',
+        };
+      case WhisperModelSize.base:
+        return {
+          'title': 'Base (~150 MB) - EMPFOHLEN',
+          'subtitle': 'Gute Balance zwischen Qualität und Geschwindigkeit.',
+        };
+      case WhisperModelSize.small:
+        return {
+          'title': 'Small (~500 MB)',
+          'subtitle': 'Sehr gute Qualität. ⚠️ Könnte instabil sein.',
+        };
+    }
+  }
+
+  Future<void> _updateWhisperModel(WhisperModelSize newModel) async {
+    await _settingsService.setWhisperModelSize(newModel);
+    setState(() {
+      _currentWhisperModel = newModel;
+    });
+    
+    _showSnackBar('Modell auf ${_getModelInfo(newModel)['title']} geändert. Nutze "Modell laden" um es herunterzuladen.');
+  }
+
+  Future<void> _downloadWhisperModel() async {
+    // Get model name from current selection
+    final modelSize = _currentWhisperModel;
+    final modelInfo = _getModelInfo(modelSize);
+    String modelName;
+    
+    switch (modelSize) {
+      case WhisperModelSize.tiny:
+        modelName = 'tiny';
+        break;
+      case WhisperModelSize.base:
+        modelName = 'base';
+        break;
+      case WhisperModelSize.small:
+        modelName = 'small';
+        break;
+    }
+    
+    // Get model directory
+    final appDir = await getApplicationDocumentsDirectory();
+    final modelDir = '${appDir.path}/whisper_models';
+    
+    // Create directory if it doesn't exist
+    final dir = Directory(modelDir);
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    
+    // Check if model already exists
+    final modelExists = await WhisperDownloadService.modelExists(modelName, modelDir);
+    
+    if (modelExists) {
+      final size = await WhisperDownloadService.getModelSize(modelName, modelDir);
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green),
+                SizedBox(width: 8),
+                Text('Modell vorhanden'),
+              ],
+            ),
+            content: Text(
+              'Das ${modelInfo['title']} Modell ist bereits heruntergeladen.\n\n'
+              'Größe: ${(size! / 1024 / 1024).toStringAsFixed(1)} MB\n\n'
+              'Möchtest du es erneut herunterladen?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Abbrechen'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  _startDownload(modelName, modelDir, modelInfo);
+                },
+                child: const Text('Erneut laden'),
+              ),
+            ],
+          ),
+        );
+      }
+      return;
+    }
+    
+    // Start download
+    _startDownload(modelName, modelDir, modelInfo);
+  }
+
+  Future<void> _startDownload(String modelName, String modelDir, Map<String, String> modelInfo) async {
+    if (!mounted) return;
+    
+    // Show download dialog
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _WhisperDownloadDialog(
+        modelName: modelName,
+        modelDir: modelDir,
+      ),
+    );
+    
+    if (result == true && mounted) {
+      _showSnackBar('✅ ${modelInfo['title']} erfolgreich heruntergeladen!');
+    } else if (result == false && mounted) {
+      _showSnackBar('❌ Download fehlgeschlagen', isError: true);
+    }
   }
 
   Widget _buildModeSelector() {
@@ -755,6 +1023,8 @@ class _SettingsPageState extends State<SettingsPage> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            _buildSttEngineSelector(),
+            const SizedBox(height: 16),
             _buildModeSelector(),
             const SizedBox(height: 16),
             if (_shouldShowFastApiSettings())
@@ -797,5 +1067,157 @@ class _SettingsPageState extends State<SettingsPage> {
     _ollamaUrlController.dispose();
     _ollamaModelController.dispose();
     super.dispose();
+  }
+}
+
+/// Dialog widget for showing Whisper download progress
+class _WhisperDownloadDialog extends StatefulWidget {
+  final String modelName;
+  final String modelDir;
+  
+  const _WhisperDownloadDialog({
+    required this.modelName,
+    required this.modelDir,
+  });
+
+  @override
+  State<_WhisperDownloadDialog> createState() => _WhisperDownloadDialogState();
+}
+
+class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
+  double _progress = 0.0;
+  int _downloaded = 0;
+  int _total = 0;
+  String _status = 'Starte Download...';
+  bool _isComplete = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _startDownload();
+  }
+
+  Future<void> _startDownload() async {
+    try {
+      await WhisperDownloadService.downloadModel(
+        modelName: widget.modelName,
+        destinationPath: widget.modelDir,
+        onProgress: (progress, downloaded, total) {
+          if (mounted) {
+            setState(() {
+              _progress = progress;
+              _downloaded = downloaded;
+              _total = total;
+              _status = 'Lade Whisper ${widget.modelName} Modell...';
+            });
+          }
+        },
+      );
+      
+      if (mounted) {
+        setState(() {
+          _isComplete = true;
+          _status = 'Download abgeschlossen!';
+        });
+        
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) {
+          Navigator.of(context).pop(true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _status = 'Download fehlgeschlagen';
+        });
+      }
+    }
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async => _isComplete || _error != null,
+      child: AlertDialog(
+        title: Row(
+          children: [
+            if (_isComplete)
+              const Icon(Icons.check_circle, color: Colors.green)
+            else if (_error != null)
+              const Icon(Icons.error, color: Colors.red)
+            else
+              const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                _isComplete ? 'Fertig!' : _error != null ? 'Fehler' : 'Download läuft',
+                style: const TextStyle(fontSize: 18),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(_status),
+            const SizedBox(height: 16),
+            if (_error == null) ...[
+              LinearProgressIndicator(
+                value: _progress,
+                minHeight: 8,
+                backgroundColor: Colors.grey[300],
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  _isComplete ? Colors.green : Theme.of(context).primaryColor,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    '${(_progress * 100).toStringAsFixed(1)}%',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  if (_total > 0)
+                    Text(
+                      '${_formatBytes(_downloaded)} / ${_formatBytes(_total)}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+                ],
+              ),
+            ] else ...[
+              Text(
+                _error!,
+                style: const TextStyle(color: Colors.red),
+              ),
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Schließen'),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 } 

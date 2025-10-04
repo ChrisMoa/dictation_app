@@ -11,6 +11,7 @@ import 'package:dictation_app/features/overlay/domain/entities/overlay_config.da
 import 'package:dictation_app/features/settings/presentation/pages/settings_page.dart';
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
 import 'package:dictation_app/core/services/hybrid_grammar_provider.dart';
+import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
 
 class DictationHomePage extends StatefulWidget {
@@ -28,6 +29,21 @@ class _DictationHomePageState extends State<DictationHomePage> {
   void initState() {
     super.initState();
     _setupFallbackListener();
+    _setupWhisperContext();
+  }
+
+  void _setupWhisperContext() {
+    // Set context for WhisperService to show download dialog
+    try {
+      final whisperService = getIt<WhisperService>();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          whisperService.setDownloadContext(context);
+        }
+      });
+    } catch (e) {
+      debugPrint('Error setting up Whisper context: $e');
+    }
   }
 
   void _setupFallbackListener() {

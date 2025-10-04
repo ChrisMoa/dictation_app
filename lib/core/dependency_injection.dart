@@ -3,9 +3,11 @@ import 'package:get_it/get_it.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
 import 'package:dictation_app/core/services/settings_service.dart';
-import 'package:dictation_app/core/services/hybrid_grammar_provider.dart';
+import 'package:dictation_app/core/services/ollama_grammar_provider.dart';
+import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/features/dictation/data/repositories/speech_repository_impl.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
+import 'package:dictation_app/features/dictation/data/datasources/whisper_datasource.dart';
 import 'package:dictation_app/features/dictation/domain/repositories/speech_repository.dart';
 import 'package:dictation_app/features/dictation/domain/usecases/start_listening.dart';
 import 'package:dictation_app/features/dictation/domain/usecases/stop_listening.dart';
@@ -28,29 +30,70 @@ Future<void> setupDependencyInjection() async {
     debugPrint('DI: Registering external dependencies');
     getIt.registerLazySingleton<SpeechToText>(() => SpeechToText());
     debugPrint('DI: SpeechToText registered');
-    
+
+    // Whisper Service
+    debugPrint('DI: Registering Whisper Service');
+    getIt.registerLazySingleton<WhisperService>(() => WhisperService());
+    debugPrint('DI: WhisperService registered');
+
     // Settings Service (initialize first)
     debugPrint('DI: Registering Settings Service');
     getIt.registerLazySingleton<SettingsService>(() => SettingsService());
     debugPrint('DI: SettingsService registered');
     
-    // AI Grammar Service with Hybrid Provider
+    // AI Grammar Service with Ollama Provider only (GEC removed)
     debugPrint('DI: Registering AI Grammar Service');
     getIt.registerLazySingleton<AIGrammarService>(() {
       final aiService = AIGrammarService();
       final settingsService = getIt<SettingsService>();
-      final hybridProvider = HybridGrammarProvider(settingsService: settingsService);
-      aiService.setProvider(hybridProvider);
+      final ollamaProvider = OllamaGrammarProvider(
+        ollamaUrl: settingsService.ollamaUrl,
+        modelName: settingsService.ollamaModel,
+        customPrompt: settingsService.ollamaPrompt,
+      );
+      aiService.setProvider(ollamaProvider);
       return aiService;
     });
-    debugPrint('DI: AIGrammarService with HybridProvider registered');
+    debugPrint('DI: AIGrammarService with Ollama Provider registered (GEC removed)');
     
     // Data Sources
     debugPrint('DI: Registering data sources');
-    getIt.registerLazySingleton<SpeechDatasource>(
-      () => SpeechDatasourceImpl(speechToText: getIt()),
+    // Register both STT datasources as singletons
+    getIt.registerLazySingleton<WhisperDatasourceImpl>(
+      () {
+        debugPrint('DI: Creating WhisperDatasourceImpl instance');
+        return WhisperDatasourceImpl(whisperService: getIt());
+      },
     );
-    debugPrint('DI: SpeechDatasource registered');
+    debugPrint('DI: WhisperDatasourceImpl registered');
+    
+    getIt.registerLazySingleton<SpeechDatasourceImpl>(
+      () {
+        debugPrint('DI: Creating SpeechDatasourceImpl instance');
+        return SpeechDatasourceImpl(speechToText: getIt());
+      },
+    );
+    debugPrint('DI: SpeechDatasourceImpl registered');
+    
+    // Register the active STT datasource based on settings
+    // IMPORTANT: This is evaluated ONCE at startup based on initial settings
+    // App restart required after changing STT engine in settings
+    getIt.registerLazySingleton<SpeechDatasource>(
+      () {
+        final settingsService = getIt<SettingsService>();
+        final sttEngine = settingsService.sttEngine;
+        debugPrint('DI: ⚙️ Selecting STT engine: ${sttEngine.name}');
+        
+        if (sttEngine == SttEngine.whisper) {
+          debugPrint('DI: ✅ Using Whisper (Offline) as primary STT');
+          return getIt<WhisperDatasourceImpl>();
+        } else {
+          debugPrint('DI: ✅ Using Google STT (Online) as primary STT');
+          return getIt<SpeechDatasourceImpl>();
+        }
+      },
+    );
+    debugPrint('DI: Primary SpeechDatasource registered (dynamic based on settings)');
     
     getIt.registerLazySingleton<OverlayDatasource>(
       () => OverlayDatasourceImpl(),
