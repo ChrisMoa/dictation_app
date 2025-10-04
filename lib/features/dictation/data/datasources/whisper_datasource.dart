@@ -26,6 +26,90 @@ class WhisperDatasourceImpl implements SpeechDatasource {
 
   WhisperDatasourceImpl({required this.whisperService});
 
+  /// Validates if transcribed text is actual speech or just noise/gibberish
+  bool _isValidSpeech(String text) {
+    // Remove extra whitespace and [] annotations for validation
+    final cleanText = text.replaceAll(RegExp(r'\[.*?\]'), '').trim();
+    
+    // Empty or very short text is likely noise
+    if (cleanText.length < 5) {
+      return false; // Increased from 3 to 5
+    }
+    
+    // Check for repetitive characters (e.g. "aaaaa", "hhhh")
+    if (RegExp(r'(.)\1{3,}').hasMatch(cleanText)) {
+      return false; // Reduced from 4 to 3 - more strict
+    }
+    
+    // Check for common Whisper hallucinations/noise patterns
+    final lowerText = cleanText.toLowerCase();
+    
+    // Extended noise patterns that Whisper produces
+    final noisePatterns = [
+      'untertitel',
+      'subtitle',
+      'thanks for watching',
+      'danke fürs zuschauen',
+      'subscribe',
+      'abonnieren',
+      '♪',
+      '♫',
+      'www.',
+      '.com',
+      'http',
+      'youtube',
+      'video',
+      'channel',
+      'kanal',
+      'musik',
+      'music',
+      'sound',
+      'audio',
+      'hintergrundmusik',
+      'background music',
+      'applaus',
+      'applause',
+      'lachen',
+      'laughter',
+      'geräusch',
+      'noise',
+      'rauschen',
+      'stille',
+      'silence',
+      'pause',
+    ];
+    
+    for (final pattern in noisePatterns) {
+      if (lowerText.contains(pattern)) {
+        return false;
+      }
+    }
+    
+    // Check if text is mostly punctuation or special characters
+    final alphanumericCount = cleanText.replaceAll(RegExp(r'[^a-zA-ZäöüÄÖÜß0-9]'), '').length;
+    if (alphanumericCount < cleanText.length * 0.6) {
+      return false; // Increased from 50% to 60% - more strict
+    }
+    
+    // Check for minimum word count (at least 2 words with 2+ characters)
+    final words = cleanText.split(RegExp(r'\s+'));
+    final validWords = words.where((w) => w.length >= 2).toList();
+    if (validWords.length < 2) {
+      return false; // Increased from 1 to 2 - need at least 2 words
+    }
+    
+    // Check for very repetitive words (e.g. "test test test")
+    if (validWords.length >= 3) {
+      final uniqueWords = validWords.toSet();
+      if (uniqueWords.length < validWords.length * 0.5) {
+        return false; // Too many repeated words
+      }
+    }
+    
+    // Passed all checks - likely valid speech
+    return true;
+  }
+
   @override
   Future<bool> initialize() async {
     debugPrint('WhisperDatasource: Initializing Whisper speech recognition');
@@ -105,12 +189,16 @@ class WhisperDatasourceImpl implements SpeechDatasource {
 
       debugPrint('WhisperDatasource: Recording to: $_currentRecordingPath');
 
-      // Start recording
+      // Start recording with noise suppression
       await _audioRecorder.start(
         const RecordConfig(
           encoder: AudioEncoder.wav,
           sampleRate: 16000,
           numChannels: 1,
+          // Enable noise suppression and echo cancellation
+          autoGain: true,
+          echoCancel: true,
+          noiseSuppress: true,
         ),
         path: _currentRecordingPath!,
       );
@@ -213,19 +301,26 @@ class WhisperDatasourceImpl implements SpeechDatasource {
       debugPrint('WhisperDatasource: Total transcription time: ${transcribeDuration.inMilliseconds}ms');
 
       if (result.success && result.text.trim().isNotEmpty) {
-        // Add to accumulated text
-        _accumulatedText.add(result.text.trim());
+        final transcribedText = result.text.trim();
+        
+        // Filter out gibberish/noise - only accept meaningful speech
+        if (_isValidSpeech(transcribedText)) {
+          // Add to accumulated text
+          _accumulatedText.add(transcribedText);
 
-        // Emit partial result with accumulated text
-        _streamController?.add(SpeechResultModel(
-          recognizedWords: _accumulatedText.join(' '),
-          hasConfidenceRating: false,
-          confidence: 0.8,
-          finalResult: false,
-        ));
+          // Emit partial result with accumulated text
+          _streamController?.add(SpeechResultModel(
+            recognizedWords: _accumulatedText.join(' '),
+            hasConfidenceRating: false,
+            confidence: 0.8,
+            finalResult: false,
+          ));
 
-        debugPrint('WhisperDatasource: ✅ Emitted partial result: "${_accumulatedText.join(' ')}"');
-        debugPrint('WhisperDatasource: Accumulated segments: ${_accumulatedText.length}');
+          debugPrint('WhisperDatasource: ✅ Emitted partial result: "${_accumulatedText.join(' ')}"');
+          debugPrint('WhisperDatasource: Accumulated segments: ${_accumulatedText.length}');
+        } else {
+          debugPrint('WhisperDatasource: ⚠️ Filtered out invalid/noise text: "$transcribedText"');
+        }
       } else {
         debugPrint('WhisperDatasource: ❌ Snapshot transcription failed or empty: ${result.error}');
       }
@@ -263,6 +358,10 @@ class WhisperDatasourceImpl implements SpeechDatasource {
           encoder: AudioEncoder.wav,
           sampleRate: 16000,
           numChannels: 1,
+          // Enable noise suppression and echo cancellation
+          autoGain: true,
+          echoCancel: true,
+          noiseSuppress: true,
         ),
         path: _currentRecordingPath!,
       );

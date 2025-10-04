@@ -403,21 +403,31 @@ class _SettingsPageState extends State<SettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Whisper Modell-Größe:',
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: () => _downloadWhisperModel(),
-                          icon: const Icon(Icons.download, size: 18),
-                          label: const Text('Modell laden'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                          ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Whisper Modell-Größe:',
+                                style: Theme.of(context).textTheme.titleSmall,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            ElevatedButton.icon(
+                              onPressed: () => _downloadWhisperModel(),
+                              icon: const Icon(Icons.download, size: 16),
+                              label: const Text('Laden', style: TextStyle(fontSize: 13)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                minimumSize: const Size(0, 32),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),

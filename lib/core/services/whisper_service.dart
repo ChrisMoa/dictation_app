@@ -186,6 +186,9 @@ class WhisperService {
       final transcribedText = response.text;
       final processingSpeed = audioSize / stopwatch.elapsedMilliseconds; // bytes per ms
 
+      // Keep [] annotations for AI filtering later
+      // Just log and return as-is
+
       debugPrint('WhisperService: ✅ Transcription completed in ${stopwatch.elapsedMilliseconds}ms');
       debugPrint('WhisperService: Processing speed: ${(processingSpeed * 1000 / 1024).toStringAsFixed(2)} KB/s');
       debugPrint('WhisperService: Result: "$transcribedText"');
