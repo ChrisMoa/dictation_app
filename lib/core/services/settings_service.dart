@@ -9,12 +9,25 @@ enum GrammarCorrectionMode {
   hybridOllama,  // Try Ollama first, fallback to offline
 }
 
+enum SttEngine {
+  whisper,      // Local Whisper model
+  googleStt,    // Google Speech-to-Text (online)
+}
+
+enum WhisperModelSize {
+  tiny,    // ~75 MB - Schnell, niedrige Qualität
+  base,    // ~150 MB - Gut, empfohlen
+  small,   // ~500 MB - Sehr gut (könnte crashen)
+}
+
 class SettingsService {
   static const String _grammarModeKey = 'grammar_correction_mode';
   static const String _serverUrlKey = 'grammar_server_url';
   static const String _ollamaUrlKey = 'ollama_server_url';
   static const String _ollamaModelKey = 'ollama_model_name';
   static const String _ollamaPromptKey = 'ollama_custom_prompt';
+  static const String _sttEngineKey = 'stt_engine';
+  static const String _whisperModelKey = 'whisper_model_size';
   
   static const String _defaultServerUrl = 'http://localhost:8000';
   static const String _defaultOllamaUrl = 'http://localhost:11434';
@@ -174,6 +187,65 @@ class SettingsService {
     }
   }
 
+  /// Get the current STT engine
+  SttEngine get sttEngine {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, returning default STT engine');
+      return SttEngine.whisper;
+    }
+
+    final engineIndex = _prefs.getInt(_sttEngineKey) ?? SttEngine.whisper.index;
+    // Ensure the index is valid for current enum values
+    if (engineIndex >= SttEngine.values.length) {
+      return SttEngine.whisper;
+    }
+    return SttEngine.values[engineIndex];
+  }
+
+  /// Set the STT engine
+  Future<void> setSttEngine(SttEngine engine) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save STT engine');
+      return;
+    }
+
+    try {
+      await _prefs.setInt(_sttEngineKey, engine.index);
+      debugPrint('SettingsService: STT engine set to ${engine.name}');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save STT engine: $e');
+    }
+  }
+
+  /// Get the current Whisper model size
+  WhisperModelSize get whisperModelSize {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, returning default Whisper model');
+      return WhisperModelSize.base;
+    }
+
+    final modelIndex = _prefs.getInt(_whisperModelKey) ?? WhisperModelSize.base.index;
+    if (modelIndex >= WhisperModelSize.values.length) {
+      return WhisperModelSize.base;
+    }
+    return WhisperModelSize.values[modelIndex];
+  }
+
+  /// Set the Whisper model size
+  Future<void> setWhisperModelSize(WhisperModelSize modelSize) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Whisper model');
+      return;
+    }
+
+    try {
+      await _prefs.setInt(_whisperModelKey, modelSize.index);
+      debugPrint('SettingsService: Whisper model size set to ${modelSize.name}');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Whisper model: $e');
+    }
+  }
+
   /// Check if settings are initialized
   bool get isInitialized => _isInitialized;
 
@@ -187,6 +259,8 @@ class SettingsService {
       await _prefs.remove(_ollamaUrlKey);
       await _prefs.remove(_ollamaModelKey);
       await _prefs.remove(_ollamaPromptKey);
+      await _prefs.remove(_sttEngineKey);
+      await _prefs.remove(_whisperModelKey);
       debugPrint('SettingsService: Settings reset to defaults');
     } catch (e) {
       debugPrint('SettingsService: Failed to reset settings: $e');
