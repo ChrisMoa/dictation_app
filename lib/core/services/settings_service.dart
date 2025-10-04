@@ -1,12 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum GrammarCorrectionMode {
-  onlineOnly,
-  offlineOnly,
-  ollamaOnly,    // New: Ollama only mode
-  hybrid,        // Try online first, fallback to offline
-  hybridOllama,  // Try Ollama first, fallback to offline
+enum TextProcessingMode {
+  disabled,      // No text processing after STT
+  ollamaEnabled, // Use Ollama for text processing
 }
 
 enum SttEngine {
@@ -20,19 +17,41 @@ enum WhisperModelSize {
   small,   // ~500 MB - Sehr gut (könnte crashen)
 }
 
+enum OllamaPromptTemplate {
+  grammarCorrection,  // Grammatik- und Rechtschreibkorrektur
+  styleFormal,        // Formeller Schreibstil
+  styleInformal,      // Informeller Schreibstil
+  styleAcademic,      // Akademischer Schreibstil
+  translationDeEn,    // Übersetzung Deutsch → Englisch
+  translationEnDe,    // Übersetzung Englisch → Deutsch
+  summarization,      // Zusammenfassung
+  custom,             // Benutzerdefiniert
+}
+
 class SettingsService {
-  static const String _grammarModeKey = 'grammar_correction_mode';
-  static const String _serverUrlKey = 'grammar_server_url';
+  static const String _textProcessingModeKey = 'text_processing_mode';
   static const String _ollamaUrlKey = 'ollama_server_url';
   static const String _ollamaModelKey = 'ollama_model_name';
   static const String _ollamaPromptKey = 'ollama_custom_prompt';
+  static const String _ollamaPromptTemplateKey = 'ollama_prompt_template';
   static const String _sttEngineKey = 'stt_engine';
   static const String _whisperModelKey = 'whisper_model_size';
-  
-  static const String _defaultServerUrl = 'http://localhost:8000';
+
   static const String _defaultOllamaUrl = 'http://localhost:11434';
   static const String _defaultOllamaModel = 'gemma3:1b';
   static const String _defaultOllamaPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}';
+
+  // Prompt templates
+  static const Map<OllamaPromptTemplate, String> _promptTemplates = {
+    OllamaPromptTemplate.grammarCorrection: 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}',
+    OllamaPromptTemplate.styleFormal: 'Formuliere den folgenden Text in einem formellen, professionellen Stil um. Verwende höfliche Anrede und sachliche Sprache. Gib nur den umformulierten Text zurück:\n\n{TEXT}',
+    OllamaPromptTemplate.styleInformal: 'Formuliere den folgenden Text in einem lockeren, informellen Stil um. Verwende eine freundliche, persönliche Sprache. Gib nur den umformulierten Text zurück:\n\n{TEXT}',
+    OllamaPromptTemplate.styleAcademic: 'Formuliere den folgenden Text in einem wissenschaftlichen, akademischen Stil um. Verwende Fachsprache und präzise Formulierungen. Gib nur den umformulierten Text zurück:\n\n{TEXT}',
+    OllamaPromptTemplate.translationDeEn: 'Translate the following German text to English. Provide only the translation without explanations:\n\n{TEXT}',
+    OllamaPromptTemplate.translationEnDe: 'Übersetze den folgenden englischen Text ins Deutsche. Gib nur die Übersetzung ohne Erklärungen zurück:\n\n{TEXT}',
+    OllamaPromptTemplate.summarization: 'Fasse den folgenden Text in 2-3 prägnanten Sätzen zusammen. Gib nur die Zusammenfassung zurück:\n\n{TEXT}',
+    OllamaPromptTemplate.custom: '', // Will be filled with user's custom prompt
+  };
 
   late SharedPreferences _prefs;
   bool _isInitialized = false;
@@ -51,62 +70,33 @@ class SettingsService {
     }
   }
 
-  /// Get the current grammar correction mode
-  GrammarCorrectionMode get grammarCorrectionMode {
+  /// Get the current text processing mode
+  TextProcessingMode get textProcessingMode {
     if (!_isInitialized) {
       debugPrint('SettingsService: Not initialized, returning default mode');
-      return GrammarCorrectionMode.hybrid;
+      return TextProcessingMode.disabled;
     }
 
-    final modeIndex = _prefs.getInt(_grammarModeKey) ?? GrammarCorrectionMode.hybrid.index;
+    final modeIndex = _prefs.getInt(_textProcessingModeKey) ?? TextProcessingMode.disabled.index;
     // Ensure the index is valid for current enum values
-    if (modeIndex >= GrammarCorrectionMode.values.length) {
-      return GrammarCorrectionMode.hybrid;
+    if (modeIndex >= TextProcessingMode.values.length) {
+      return TextProcessingMode.disabled;
     }
-    return GrammarCorrectionMode.values[modeIndex];
+    return TextProcessingMode.values[modeIndex];
   }
 
-  /// Set the grammar correction mode
-  Future<void> setGrammarCorrectionMode(GrammarCorrectionMode mode) async {
+  /// Set the text processing mode
+  Future<void> setTextProcessingMode(TextProcessingMode mode) async {
     if (!_isInitialized) {
       debugPrint('SettingsService: Not initialized, cannot save mode');
       return;
     }
 
     try {
-      await _prefs.setInt(_grammarModeKey, mode.index);
-      debugPrint('SettingsService: Grammar mode set to ${mode.name}');
+      await _prefs.setInt(_textProcessingModeKey, mode.index);
+      debugPrint('SettingsService: Text processing mode set to ${mode.name}');
     } catch (e) {
-      debugPrint('SettingsService: Failed to save grammar mode: $e');
-    }
-  }
-
-  /// Get the server URL
-  String get serverUrl {
-    if (!_isInitialized) {
-      return _defaultServerUrl;
-    }
-
-    return _prefs.getString(_serverUrlKey) ?? _defaultServerUrl;
-  }
-
-  /// Set the server URL
-  Future<void> setServerUrl(String url) async {
-    if (!_isInitialized) {
-      debugPrint('SettingsService: Not initialized, cannot save server URL');
-      return;
-    }
-
-    try {
-      // Ensure URL format is correct
-      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        url = 'http://$url';
-      }
-      
-      await _prefs.setString(_serverUrlKey, url);
-      debugPrint('SettingsService: Server URL set to $url');
-    } catch (e) {
-      debugPrint('SettingsService: Failed to save server URL: $e');
+      debugPrint('SettingsService: Failed to save text processing mode: $e');
     }
   }
 
@@ -187,6 +177,89 @@ class SettingsService {
     }
   }
 
+  /// Get the current Ollama prompt template
+  OllamaPromptTemplate get ollamaPromptTemplate {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, returning default template');
+      return OllamaPromptTemplate.grammarCorrection;
+    }
+
+    final templateIndex = _prefs.getInt(_ollamaPromptTemplateKey) ?? OllamaPromptTemplate.grammarCorrection.index;
+    // Ensure the index is valid for current enum values
+    if (templateIndex >= OllamaPromptTemplate.values.length) {
+      return OllamaPromptTemplate.grammarCorrection;
+    }
+    return OllamaPromptTemplate.values[templateIndex];
+  }
+
+  /// Set the Ollama prompt template
+  Future<void> setOllamaPromptTemplate(OllamaPromptTemplate template) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Ollama template');
+      return;
+    }
+
+    try {
+      await _prefs.setInt(_ollamaPromptTemplateKey, template.index);
+      debugPrint('SettingsService: Ollama template set to ${template.name}');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Ollama template: $e');
+    }
+  }
+
+  /// Get prompt text for a specific template
+  String getPromptForTemplate(OllamaPromptTemplate template) {
+    if (template == OllamaPromptTemplate.custom) {
+      // Return user's custom prompt
+      return ollamaPrompt;
+    }
+    return _promptTemplates[template] ?? _defaultOllamaPrompt;
+  }
+
+  /// Get display name for a template
+  String getTemplateDisplayName(OllamaPromptTemplate template) {
+    switch (template) {
+      case OllamaPromptTemplate.grammarCorrection:
+        return 'Grammatik- & Rechtschreibkorrektur';
+      case OllamaPromptTemplate.styleFormal:
+        return 'Formeller Schreibstil';
+      case OllamaPromptTemplate.styleInformal:
+        return 'Informeller Schreibstil';
+      case OllamaPromptTemplate.styleAcademic:
+        return 'Akademischer Schreibstil';
+      case OllamaPromptTemplate.translationDeEn:
+        return 'Übersetzung Deutsch → Englisch';
+      case OllamaPromptTemplate.translationEnDe:
+        return 'Übersetzung Englisch → Deutsch';
+      case OllamaPromptTemplate.summarization:
+        return 'Zusammenfassung';
+      case OllamaPromptTemplate.custom:
+        return 'Benutzerdefiniert';
+    }
+  }
+
+  /// Get description for a template
+  String getTemplateDescription(OllamaPromptTemplate template) {
+    switch (template) {
+      case OllamaPromptTemplate.grammarCorrection:
+        return 'Korrigiert Grammatik und Rechtschreibung';
+      case OllamaPromptTemplate.styleFormal:
+        return 'Ändert den Text in einen formellen, professionellen Stil';
+      case OllamaPromptTemplate.styleInformal:
+        return 'Ändert den Text in einen lockeren, freundlichen Stil';
+      case OllamaPromptTemplate.styleAcademic:
+        return 'Ändert den Text in einen wissenschaftlichen Stil';
+      case OllamaPromptTemplate.translationDeEn:
+        return 'Übersetzt deutschen Text ins Englische';
+      case OllamaPromptTemplate.translationEnDe:
+        return 'Übersetzt englischen Text ins Deutsche';
+      case OllamaPromptTemplate.summarization:
+        return 'Fasst den Text zusammen (2-3 Sätze)';
+      case OllamaPromptTemplate.custom:
+        return 'Eigener Prompt mit {TEXT} Platzhalter';
+    }
+  }
+
   /// Get the current STT engine
   SttEngine get sttEngine {
     if (!_isInitialized) {
@@ -254,11 +327,11 @@ class SettingsService {
     if (!_isInitialized) return;
 
     try {
-      await _prefs.remove(_grammarModeKey);
-      await _prefs.remove(_serverUrlKey);
+      await _prefs.remove(_textProcessingModeKey);
       await _prefs.remove(_ollamaUrlKey);
       await _prefs.remove(_ollamaModelKey);
       await _prefs.remove(_ollamaPromptKey);
+      await _prefs.remove(_ollamaPromptTemplateKey);
       await _prefs.remove(_sttEngineKey);
       await _prefs.remove(_whisperModelKey);
       debugPrint('SettingsService: Settings reset to defaults');
