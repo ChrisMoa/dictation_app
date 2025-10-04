@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:dictation_app/features/spell_check/data/models/spell_check_result_model.dart';
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
+import 'package:dictation_app/core/dependency_injection.dart';
 
 abstract class SpellCheckDatasource {
   Future<bool> initialize();
@@ -18,10 +19,11 @@ class SpellCheckDatasourceImpl implements SpellCheckDatasource {
   @override
   Future<bool> initialize() async {
     debugPrint('SpellCheck: Starting initialization...');
-    
+
     try {
-      // Initialize AI service
-      _aiGrammarService = AIGrammarService();
+      // Get AI service from dependency injection
+      _aiGrammarService = getIt<AIGrammarService>();
+      debugPrint('SpellCheck: Retrieved AIGrammarService from DI');
       
       // Load vocabulary for fallback
       debugPrint('SpellCheck: Loading vocabulary from $_vocabPath');

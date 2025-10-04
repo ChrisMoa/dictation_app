@@ -2,8 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:dictation_app/core/services/settings_service.dart';
-import 'package:dictation_app/core/services/ai_grammar_service.dart';
-import 'package:dictation_app/core/services/hybrid_grammar_provider.dart';
 import 'package:dictation_app/core/services/ollama_grammar_provider.dart';
 import 'package:dictation_app/core/services/whisper_download_service.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
@@ -18,22 +16,21 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late SettingsService _settingsService;
-  late AIGrammarService _aiGrammarService;
-  
-  GrammarCorrectionMode _currentMode = GrammarCorrectionMode.hybrid;
+
+  // STT Settings
   SttEngine _currentSttEngine = SttEngine.whisper;
   WhisperModelSize _currentWhisperModel = WhisperModelSize.base;
-  String _serverUrl = '';
+
+  // Text Processing Settings
+  TextProcessingMode _textProcessingMode = TextProcessingMode.disabled;
   String _ollamaUrl = '';
   String _ollamaModel = '';
-  String _ollamaPrompt = '';
-  bool _isServerHealthy = false;
+  OllamaPromptTemplate _currentTemplate = OllamaPromptTemplate.grammarCorrection;
   bool _isOllamaHealthy = false;
   bool _isCheckingHealth = false;
   bool _isLoadingModels = false;
   List<String> _availableModels = [];
-  
-  final TextEditingController _serverUrlController = TextEditingController();
+
   final TextEditingController _ollamaUrlController = TextEditingController();
   final TextEditingController _ollamaModelController = TextEditingController();
   final TextEditingController _ollamaPromptController = TextEditingController();
@@ -42,49 +39,46 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _settingsService = getIt<SettingsService>();
-    _aiGrammarService = getIt<AIGrammarService>();
     _loadSettings();
   }
 
   void _loadSettings() {
     setState(() {
-      _currentMode = _settingsService.grammarCorrectionMode;
       _currentSttEngine = _settingsService.sttEngine;
       _currentWhisperModel = _settingsService.whisperModelSize;
-      _serverUrl = _settingsService.serverUrl;
+      _textProcessingMode = _settingsService.textProcessingMode;
       _ollamaUrl = _settingsService.ollamaUrl;
       _ollamaModel = _settingsService.ollamaModel;
-      _ollamaPrompt = _settingsService.ollamaPrompt;
-      _serverUrlController.text = _serverUrl;
+      _currentTemplate = _settingsService.ollamaPromptTemplate;
       _ollamaUrlController.text = _ollamaUrl;
       _ollamaModelController.text = _ollamaModel;
-      _ollamaPromptController.text = _ollamaPrompt;
+      _ollamaPromptController.text = _settingsService.getPromptForTemplate(_currentTemplate);
     });
-    _checkServerHealth();
-    if (_shouldShowOllamaSettings()) {
+
+    if (_textProcessingMode == TextProcessingMode.ollamaEnabled) {
+      _checkOllamaHealth();
       _loadAvailableModels();
     }
   }
 
-  Future<void> _checkServerHealth() async {
-    if (_currentMode == GrammarCorrectionMode.offlineOnly) return;
-    
+  Future<void> _checkOllamaHealth() async {
     setState(() {
       _isCheckingHealth = true;
     });
 
     try {
-      final provider = _aiGrammarService.currentProvider;
-      if (provider is HybridGrammarProvider) {
-        final status = await provider.getProviderStatus();
-        setState(() {
-          _isServerHealthy = status['fastapi'] ?? false;
-          _isOllamaHealthy = status['ollama'] ?? false;
-        });
-      }
+      final testProvider = OllamaGrammarProvider(
+        ollamaUrl: _ollamaUrl,
+        modelName: _ollamaModel,
+        customPrompt: _ollamaPromptController.text,
+      );
+
+      final isHealthy = await testProvider.isServerHealthy();
+      setState(() {
+        _isOllamaHealthy = isHealthy;
+      });
     } catch (e) {
       setState(() {
-        _isServerHealthy = false;
         _isOllamaHealthy = false;
       });
     } finally {
@@ -94,13 +88,53 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _loadAvailableModels() async {
+    final url = _ollamaUrlController.text.trim();
+    if (url.isEmpty) return;
+
+    setState(() {
+      _isLoadingModels = true;
+    });
+
+    try {
+      final testProvider = OllamaGrammarProvider(
+        ollamaUrl: url,
+        modelName: 'dummy',
+      );
+
+      final models = await testProvider.getAvailableModels();
+      setState(() {
+        _availableModels = models;
+        _isLoadingModels = false;
+      });
+    } catch (e) {
+      setState(() {
+        _availableModels = [];
+        _isLoadingModels = false;
+      });
+    }
+  }
+
+  Future<void> _updateTextProcessingMode(TextProcessingMode newMode) async {
+    await _settingsService.setTextProcessingMode(newMode);
+    setState(() {
+      _textProcessingMode = newMode;
+    });
+
+    if (newMode == TextProcessingMode.ollamaEnabled) {
+      _checkOllamaHealth();
+      _loadAvailableModels();
+    }
+
+    _showSnackBar('Textverarbeitung: ${newMode == TextProcessingMode.disabled ? "Deaktiviert" : "Ollama aktiviert"}');
+  }
+
   Future<void> _updateSttEngine(SttEngine newEngine) async {
     await _settingsService.setSttEngine(newEngine);
     setState(() {
       _currentSttEngine = newEngine;
     });
-    
-    // Show dialog to restart app
+
     if (mounted) {
       showDialog(
         context: context,
@@ -121,8 +155,7 @@ class _SettingsPageState extends State<SettingsPage> {
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                // Close the app
-                Navigator.of(context).pop(); // Close settings
+                Navigator.of(context).pop();
               },
               child: const Text('OK - App schließen'),
             ),
@@ -132,112 +165,103 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _updateMode(GrammarCorrectionMode newMode) async {
-    await _settingsService.setGrammarCorrectionMode(newMode);
+  Future<void> _updateWhisperModel(WhisperModelSize newModel) async {
+    await _settingsService.setWhisperModelSize(newModel);
     setState(() {
-      _currentMode = newMode;
-    });
-    
-    // Update the hybrid provider
-    final provider = _aiGrammarService.currentProvider;
-    if (provider is HybridGrammarProvider) {
-      _checkServerHealth();
-    }
-    
-    _showSnackBar('Grammar correction mode updated to ${newMode.name}');
-  }
-
-  Future<void> _updateServerUrl() async {
-    final newUrl = _serverUrlController.text.trim();
-    if (newUrl.isEmpty) {
-      _showSnackBar('Server URL cannot be empty', isError: true);
-      return;
-    }
-
-    await _settingsService.setServerUrl(newUrl);
-    setState(() {
-      _serverUrl = newUrl;
+      _currentWhisperModel = newModel;
     });
 
-    // Update the hybrid provider with new URL
-    final provider = _aiGrammarService.currentProvider;
-    if (provider is HybridGrammarProvider) {
-      provider.updateServerUrl(newUrl);
-      _checkServerHealth();
-    }
-
-    _showSnackBar('FastAPI Server URL updated successfully');
+    _showSnackBar('Modell auf ${_getModelInfo(newModel)['title']} geändert. Nutze "Modell laden" um es herunterzuladen.');
   }
 
-  Future<void> _updateOllamaConfig() async {
+  Future<void> _updatePromptTemplate(OllamaPromptTemplate newTemplate) async {
+    final templatePrompt = _settingsService.getPromptForTemplate(newTemplate);
+
+    setState(() {
+      _currentTemplate = newTemplate;
+      if (newTemplate != OllamaPromptTemplate.custom) {
+        _ollamaPromptController.text = templatePrompt;
+      }
+    });
+
+    await _settingsService.setOllamaPromptTemplate(newTemplate);
+    if (newTemplate != OllamaPromptTemplate.custom) {
+      await _settingsService.setOllamaPrompt(templatePrompt);
+    }
+
+    _showSnackBar(newTemplate == OllamaPromptTemplate.custom
+      ? 'Benutzerdefinierter Modus aktiviert'
+      : 'Template: "${_settingsService.getTemplateDisplayName(newTemplate)}"');
+  }
+
+  Future<void> _saveOllamaUrl() async {
     final newUrl = _ollamaUrlController.text.trim();
-    final newModel = _ollamaModelController.text.trim();
-    final newPrompt = _ollamaPromptController.text.trim();
-    
+
     if (newUrl.isEmpty) {
-      _showSnackBar('Ollama URL cannot be empty', isError: true);
-      return;
-    }
-    
-    if (newModel.isEmpty) {
-      _showSnackBar('Ollama model cannot be empty', isError: true);
-      return;
-    }
-
-    if (newPrompt.isEmpty) {
-      _showSnackBar('Ollama prompt cannot be empty', isError: true);
-      return;
-    }
-
-    if (!newPrompt.contains('{TEXT}')) {
-      _showSnackBar('Prompt must contain {TEXT} placeholder', isError: true);
+      _showSnackBar('Ollama URL darf nicht leer sein', isError: true);
       return;
     }
 
     await _settingsService.setOllamaUrl(newUrl);
-    await _settingsService.setOllamaModel(newModel);
-    await _settingsService.setOllamaPrompt(newPrompt);
-    
     setState(() {
       _ollamaUrl = newUrl;
-      _ollamaModel = newModel;
-      _ollamaPrompt = newPrompt;
     });
 
-    // Update the hybrid provider with new Ollama config
-    final provider = _aiGrammarService.currentProvider;
-    if (provider is HybridGrammarProvider) {
-      provider.updateOllamaConfig(newUrl, newModel, newPrompt: newPrompt);
-      _checkServerHealth();
+    _showSnackBar('URL gespeichert - teste Verbindung...');
+
+    // Automatically test connection and load models
+    await _testOllamaConnection();
+    if (_isOllamaHealthy) {
+      await _loadAvailableModels();
     }
-
-    _showSnackBar('Ollama configuration updated successfully');
   }
 
-  void _resetPromptToDefault() {
-    const defaultPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}';
-    
-    setState(() {
-      _ollamaPromptController.text = defaultPrompt;
-    });
-    
-    _showSnackBar('Prompt reset to default');
-  }
+  Future<void> _saveOllamaModel() async {
+    final newModel = _ollamaModelController.text.trim();
 
-  Future<void> _testOllamaConnection() async {
-    debugPrint('=== Manual Ollama Connection Test ===');
-    debugPrint('User initiated Ollama connection test');
-    
-    final url = _ollamaUrlController.text.trim();
-    final model = _ollamaModelController.text.trim();
-    
-    if (url.isEmpty) {
-      _showSnackBar('Please enter Ollama URL first', isError: true);
+    if (newModel.isEmpty) {
+      _showSnackBar('Ollama Modell darf nicht leer sein', isError: true);
       return;
     }
 
-    if (model.isEmpty) {
-      _showSnackBar('Please enter Ollama model name first', isError: true);
+    await _settingsService.setOllamaModel(newModel);
+    setState(() {
+      _ollamaModel = newModel;
+    });
+
+    _showSnackBar('Modell gespeichert');
+  }
+
+  Future<void> _saveOllamaPrompt() async {
+    final newPrompt = _ollamaPromptController.text.trim();
+
+    if (newPrompt.isEmpty) {
+      _showSnackBar('Ollama Prompt darf nicht leer sein', isError: true);
+      return;
+    }
+
+    if (!newPrompt.contains('{TEXT}')) {
+      _showSnackBar('Prompt muss {TEXT} Platzhalter enthalten', isError: true);
+      return;
+    }
+
+    await _settingsService.setOllamaPrompt(newPrompt);
+    _showSnackBar('Prompt gespeichert');
+  }
+
+  void _resetPromptToDefault() {
+    final defaultPrompt = _settingsService.getPromptForTemplate(_currentTemplate);
+    setState(() {
+      _ollamaPromptController.text = defaultPrompt;
+    });
+    _showSnackBar('Prompt wiederhergestellt');
+  }
+
+  Future<void> _testOllamaConnection() async {
+    final url = _ollamaUrlController.text.trim();
+
+    if (url.isEmpty) {
+      _showSnackBar('Bitte URL eingeben', isError: true);
       return;
     }
 
@@ -246,264 +270,40 @@ class _SettingsPageState extends State<SettingsPage> {
     });
 
     try {
-      final prompt = _ollamaPromptController.text.trim();
-      debugPrint('Creating test Ollama provider with URL: $url, Model: $model, Prompt: ${prompt.substring(0, prompt.length > 50 ? 50 : prompt.length)}...');
+      // Test connection by fetching available models
       final testProvider = OllamaGrammarProvider(
         ollamaUrl: url,
-        modelName: model,
-        customPrompt: prompt.isNotEmpty ? prompt : _settingsService.ollamaPrompt,
+        modelName: 'dummy', // Dummy model just to create provider
       );
 
-      debugPrint('Testing Ollama health check...');
-      final isHealthy = await testProvider.isServerHealthy();
-      debugPrint('Ollama health check result: $isHealthy');
+      final models = await testProvider.getAvailableModels();
 
       setState(() {
-        _isOllamaHealthy = isHealthy;
+        _isOllamaHealthy = models.isNotEmpty;
         _isCheckingHealth = false;
+        _availableModels = models;
       });
 
-      if (isHealthy) {
-        _showSnackBar('✅ Ollama connection successful! Model "$model" is available.');
-        
-        // Try a test correction
-        debugPrint('Testing actual text correction...');
-        try {
-          final result = await testProvider.correctText('Das ist ein test satz.');
-          debugPrint('Test correction result: ${result.correctedText}');
-          _showSnackBar('✅ Test correction successful: "${result.correctedText}"');
-        } catch (correctionError) {
-          debugPrint('Test correction failed: $correctionError');
-          _showSnackBar('⚠️ Connection OK but correction failed: $correctionError', isError: true);
-        }
+      if (models.isNotEmpty) {
+        _showSnackBar('✅ Ollama verbunden! ${models.length} Modelle gefunden.');
       } else {
-        _showSnackBar('❌ Cannot connect to Ollama server or model not found', isError: true);
+        _showSnackBar('❌ Keine Modelle gefunden', isError: true);
       }
     } catch (e) {
-      debugPrint('Ollama test failed with error: $e');
       setState(() {
         _isOllamaHealthy = false;
         _isCheckingHealth = false;
+        _availableModels = [];
       });
-      _showSnackBar('❌ Ollama test failed: $e', isError: true);
+      _showSnackBar('❌ Verbindung fehlgeschlagen: $e', isError: true);
     }
-  }
-
-  void _showOllamaDebugInfo() {
-    final url = _ollamaUrlController.text.trim();
-    final model = _ollamaModelController.text.trim();
-    
-    debugPrint('=== Ollama Debug Information ===');
-    debugPrint('Current URL: $url');
-    debugPrint('Current Model: $model');
-    debugPrint('Platform: ${Platform.operatingSystem}');
-    debugPrint('Checking URL format...');
-    
-    String debugInfo = 'Ollama Debug Information:\n\n';
-    debugInfo += 'URL: ${url.isNotEmpty ? url : 'Not configured'}\n';
-    debugInfo += 'Model: ${model.isNotEmpty ? model : 'Not configured'}\n';
-    debugInfo += 'Platform: ${Platform.operatingSystem}\n';
-    debugInfo += 'Status: ${_isOllamaHealthy ? 'Healthy' : 'Not accessible'}\n\n';
-    
-    if (url.isNotEmpty) {
-      try {
-        final uri = Uri.parse(url);
-        debugInfo += 'URL Analysis:\n';
-        debugInfo += '- Protocol: ${uri.scheme}\n';
-        debugInfo += '- Host: ${uri.host}\n';
-        debugInfo += '- Port: ${uri.port}\n';
-        debugInfo += '- Path: ${uri.path}\n';
-        debugInfo += '- Valid: ${uri.host.isNotEmpty}\n\n';
-      } catch (e) {
-        debugInfo += 'URL Analysis: Invalid format - $e\n\n';
-      }
-    }
-    
-    debugInfo += 'Troubleshooting Tips:\n';
-    debugInfo += '• Ensure Ollama is running: "ollama serve"\n';
-    debugInfo += '• Check available models: "ollama list"\n';
-    debugInfo += '• Test URL in browser: $url/api/tags\n';
-    debugInfo += '• For mobile testing, use actual IP address\n';
-    debugInfo += '• Default URL: http://localhost:11434\n';
-    debugInfo += '• Common models: llama3.2:3b, llama3.1:8b\n';
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Ollama Debug Information'),
-        content: SingleChildScrollView(
-          child: Text(
-            debugInfo,
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-          TextButton(
-            onPressed: () {
-              // Copy to clipboard
-              Clipboard.setData(ClipboardData(text: debugInfo));
-              Navigator.of(context).pop();
-              _showSnackBar('Debug info copied to clipboard');
-            },
-            child: const Text('Copy'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showSnackBar(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.green,
-        duration: Duration(seconds: 3),
-      ),
-    );
-  }
-
-  Widget _buildSttEngineSelector() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.mic, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Speech-to-Text Engine',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            RadioListTile<SttEngine>(
-              title: const Text('Whisper (Offline) - EMPFOHLEN ✅'),
-              subtitle: const Text('Lokales Whisper-Modell. Funktioniert offline. ⚠️ App-Neustart nach Wechsel erforderlich!'),
-              value: SttEngine.whisper,
-              groupValue: _currentSttEngine,
-              onChanged: (value) {
-                if (value != null) {
-                  _updateSttEngine(value);
-                }
-              },
-            ),
-            // Show model selection if Whisper is selected
-            if (_currentSttEngine == SttEngine.whisper) ...[
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.only(left: 16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Whisper Modell-Größe:',
-                                style: Theme.of(context).textTheme.titleSmall,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            ElevatedButton.icon(
-                              onPressed: () => _downloadWhisperModel(),
-                              icon: const Icon(Icons.download, size: 16),
-                              label: const Text('Laden', style: TextStyle(fontSize: 13)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blue,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                minimumSize: const Size(0, 32),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ...WhisperModelSize.values.map((size) {
-                      final info = _getModelInfo(size);
-                      return RadioListTile<WhisperModelSize>(
-                        dense: true,
-                        title: Text(info['title']!),
-                        subtitle: Text(info['subtitle']!),
-                        value: size,
-                        groupValue: _currentWhisperModel,
-                        onChanged: (value) {
-                          if (value != null) {
-                            _updateWhisperModel(value);
-                          }
-                        },
-                      );
-                    }).toList(),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            RadioListTile<SttEngine>(
-              title: const Text('Google Speech-to-Text (Online)'),
-              subtitle: const Text('Google Cloud STT. Benötigt Internet, schnelle Echtzeit-Transkription.'),
-              value: SttEngine.googleStt,
-              groupValue: _currentSttEngine,
-              onChanged: (value) {
-                if (value != null) {
-                  _updateSttEngine(value);
-                }
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Map<String, String> _getModelInfo(WhisperModelSize size) {
-    switch (size) {
-      case WhisperModelSize.tiny:
-        return {
-          'title': 'Tiny (~75 MB)',
-          'subtitle': 'Schnell, niedrige Qualität. Gut zum Testen.',
-        };
-      case WhisperModelSize.base:
-        return {
-          'title': 'Base (~150 MB) - EMPFOHLEN',
-          'subtitle': 'Gute Balance zwischen Qualität und Geschwindigkeit.',
-        };
-      case WhisperModelSize.small:
-        return {
-          'title': 'Small (~500 MB)',
-          'subtitle': 'Sehr gute Qualität. ⚠️ Könnte instabil sein.',
-        };
-    }
-  }
-
-  Future<void> _updateWhisperModel(WhisperModelSize newModel) async {
-    await _settingsService.setWhisperModelSize(newModel);
-    setState(() {
-      _currentWhisperModel = newModel;
-    });
-    
-    _showSnackBar('Modell auf ${_getModelInfo(newModel)['title']} geändert. Nutze "Modell laden" um es herunterzuladen.');
   }
 
   Future<void> _downloadWhisperModel() async {
-    // Get model name from current selection
     final modelSize = _currentWhisperModel;
     final modelInfo = _getModelInfo(modelSize);
     String modelName;
-    
+
     switch (modelSize) {
       case WhisperModelSize.tiny:
         modelName = 'tiny';
@@ -515,20 +315,17 @@ class _SettingsPageState extends State<SettingsPage> {
         modelName = 'small';
         break;
     }
-    
-    // Get model directory
+
     final appDir = await getApplicationDocumentsDirectory();
     final modelDir = '${appDir.path}/whisper_models';
-    
-    // Create directory if it doesn't exist
+
     final dir = Directory(modelDir);
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }
-    
-    // Check if model already exists
+
     final modelExists = await WhisperDownloadService.modelExists(modelName, modelDir);
-    
+
     if (modelExists) {
       final size = await WhisperDownloadService.getModelSize(modelName, modelDir);
       if (mounted) {
@@ -565,15 +362,13 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       return;
     }
-    
-    // Start download
+
     _startDownload(modelName, modelDir, modelInfo);
   }
 
   Future<void> _startDownload(String modelName, String modelDir, Map<String, String> modelInfo) async {
     if (!mounted) return;
-    
-    // Show download dialog
+
     final result = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -582,7 +377,7 @@ class _SettingsPageState extends State<SettingsPage> {
         modelDir: modelDir,
       ),
     );
-    
+
     if (result == true && mounted) {
       _showSnackBar('✅ ${modelInfo['title']} erfolgreich heruntergeladen!');
     } else if (result == false && mounted) {
@@ -590,321 +385,135 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Widget _buildModeSelector() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Grammar Correction Mode',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 16),
-            ...GrammarCorrectionMode.values.map((mode) {
-              return RadioListTile<GrammarCorrectionMode>(
-                title: Text(_getModeTitle(mode)),
-                subtitle: Text(_getModeDescription(mode)),
-                value: mode,
-                groupValue: _currentMode,
-                onChanged: (value) {
-                  if (value != null) {
-                    _updateMode(value);
-                  }
-                },
-              );
-            }).toList(),
-          ],
-        ),
+  Map<String, String> _getModelInfo(WhisperModelSize size) {
+    switch (size) {
+      case WhisperModelSize.tiny:
+        return {
+          'title': 'Tiny (~75 MB)',
+          'subtitle': 'Schnell, niedrige Qualität. Gut zum Testen.',
+        };
+      case WhisperModelSize.base:
+        return {
+          'title': 'Base (~150 MB) - EMPFOHLEN',
+          'subtitle': 'Gute Balance zwischen Qualität und Geschwindigkeit.',
+        };
+      case WhisperModelSize.small:
+        return {
+          'title': 'Small (~500 MB)',
+          'subtitle': 'Sehr gute Qualität. ⚠️ Könnte instabil sein.',
+        };
+    }
+  }
+
+  void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        duration: Duration(seconds: 3),
       ),
     );
   }
 
-  Widget _buildServerSettings() {
+  // ============ UI WIDGETS ============
+
+  Widget _buildSttSection() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'FastAPI Server Configuration',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _serverUrlController,
-              decoration: InputDecoration(
-                labelText: 'FastAPI Server URL',
-                hintText: 'http://localhost:8000',
-                border: OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(Icons.save),
-                  onPressed: _updateServerUrl,
-                ),
-              ),
-              onSubmitted: (_) => _updateServerUrl(),
-            ),
-            const SizedBox(height: 16),
             Row(
               children: [
-                Icon(
-                  _isServerHealthy ? Icons.check_circle : Icons.error,
-                  color: _isServerHealthy ? Colors.green : Colors.red,
-                ),
+                Icon(Icons.mic, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _isCheckingHealth 
-                        ? 'Checking FastAPI server status...'
-                        : _isServerHealthy 
-                            ? 'FastAPI server is healthy and ready'
-                            : 'FastAPI server is not reachable',
-                    style: TextStyle(
-                      color: _isServerHealthy ? Colors.green : Colors.red,
-                    ),
+                Text(
+                  'Spracherkennung (STT)',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOllamaSettings() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+            const SizedBox(height: 8),
             Text(
-              'Ollama Configuration',
-              style: Theme.of(context).textTheme.titleMedium,
+              'Wähle die Engine für Speech-to-Text',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.grey[600],
+              ),
             ),
             const SizedBox(height: 16),
-            TextField(
-              controller: _ollamaUrlController,
-              decoration: InputDecoration(
-                labelText: 'Ollama Server URL',
-                hintText: 'http://localhost:11434',
-                border: OutlineInputBorder(),
-                helperText: 'Full URL including protocol (http/https) and port',
-                suffixIcon: IconButton(
-                  icon: Icon(Icons.refresh),
-                  onPressed: _loadAvailableModels,
-                  tooltip: 'Refresh available models',
-                ),
-              ),
+            RadioListTile<SttEngine>(
+              title: const Text('Whisper (Offline) - EMPFOHLEN ✅'),
+              subtitle: const Text('Lokales Whisper-Modell. Funktioniert offline.'),
+              value: SttEngine.whisper,
+              groupValue: _currentSttEngine,
               onChanged: (value) {
-                // Auto-load models when URL changes
-                if (value.trim().isNotEmpty) {
-                  Future.delayed(Duration(milliseconds: 500), () {
-                    if (value == _ollamaUrlController.text) {
-                      _loadAvailableModels();
-                    }
-                  });
+                if (value != null) {
+                  _updateSttEngine(value);
                 }
               },
             ),
-            const SizedBox(height: 16),
-            if (_isLoadingModels) ...[
-              Row(
-                children: [
-                  SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Loading available models...'),
-                ],
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_availableModels.isNotEmpty) ...[
-              Text(
-                'Available Models',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
+            if (_currentSttEngine == SttEngine.whisper) ...[
               const SizedBox(height: 8),
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: DropdownButtonFormField<String>(
-                  value: _availableModels.contains(_ollamaModel) ? _ollamaModel : null,
-                  decoration: InputDecoration(
-                    labelText: 'Select Model',
-                    border: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  ),
-                  items: _availableModels.map((model) {
-                    return DropdownMenuItem<String>(
-                      value: model,
-                      child: Text(model),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    if (value != null) {
-                      _ollamaModelController.text = value;
-                      _updateOllamaConfig();
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-            TextField(
-              controller: _ollamaModelController,
-              decoration: InputDecoration(
-                labelText: 'Ollama Model Name',
-                hintText: 'llama3.2:3b',
-                border: OutlineInputBorder(),
-                helperText: _availableModels.isNotEmpty 
-                    ? 'Or type a custom model name'
-                    : 'Exact model name as shown in "ollama list"',
-                suffixIcon: IconButton(
-                  icon: Icon(Icons.save),
-                  onPressed: _updateOllamaConfig,
-                ),
-              ),
-              onSubmitted: (_) => _updateOllamaConfig(),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _ollamaPromptController,
-              decoration: InputDecoration(
-                labelText: 'Custom Prompt',
-                hintText: 'Schreib den folgenden Text mit korrekter deutscher Grammatik...',
-                border: OutlineInputBorder(),
-                helperText: 'Use {TEXT} as placeholder for the input text',
-                suffixIcon: Row(
-                  mainAxisSize: MainAxisSize.min,
+              Padding(
+                padding: const EdgeInsets.only(left: 16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    IconButton(
-                      icon: Icon(Icons.restore),
-                      onPressed: _resetPromptToDefault,
-                      tooltip: 'Reset to default prompt',
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.save),
-                      onPressed: _updateOllamaConfig,
-                      tooltip: 'Save prompt',
-                    ),
-                  ],
-                ),
-              ),
-              maxLines: 3,
-              onSubmitted: (_) => _updateOllamaConfig(),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Prompt Guidelines:',
-                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.blue[700],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '• Must contain {TEXT} placeholder\n'
-                    '• Be specific about output format\n'
-                    '• Request only corrected text without explanations\n'
-                    '• Works best with German grammar correction',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Colors.blue[600],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: _testOllamaConnection,
-                    icon: Icon(Icons.network_check),
-                    label: Text('Test Ollama'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                ElevatedButton.icon(
-                  onPressed: _showOllamaDebugInfo,
-                  icon: Icon(Icons.info),
-                  label: Text('Debug Info'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: _isOllamaHealthy ? Colors.green.withValues(alpha: 0.1) : Colors.red.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _isOllamaHealthy ? Colors.green : Colors.red,
-                  width: 1,
-                ),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        _isOllamaHealthy ? Icons.check_circle : Icons.error,
-                        color: _isOllamaHealthy ? Colors.green : Colors.red,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _isCheckingHealth 
-                              ? 'Checking Ollama status...'
-                              : _isOllamaHealthy 
-                                  ? 'Ollama is healthy and model is available'
-                                  : 'Ollama is not reachable or model not found',
-                          style: TextStyle(
-                            color: _isOllamaHealthy ? Colors.green : Colors.red,
-                            fontWeight: FontWeight.bold,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Whisper Modell-Größe:',
+                            style: Theme.of(context).textTheme.titleSmall,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  if (!_isCheckingHealth) ...[
+                        ElevatedButton.icon(
+                          onPressed: () => _downloadWhisperModel(),
+                          icon: const Icon(Icons.download, size: 16),
+                          label: const Text('Laden', style: TextStyle(fontSize: 13)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 8),
-                    Text(
-                      'URL: ${_ollamaUrlController.text.isNotEmpty ? _ollamaUrlController.text : 'Not configured'}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    Text(
-                      'Model: ${_ollamaModelController.text.isNotEmpty ? _ollamaModelController.text : 'Not configured'}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    if (_availableModels.isNotEmpty)
-                      Text(
-                        'Available: ${_availableModels.length} models',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
+                    ...WhisperModelSize.values.map((size) {
+                      final info = _getModelInfo(size);
+                      return RadioListTile<WhisperModelSize>(
+                        dense: true,
+                        title: Text(info['title']!),
+                        subtitle: Text(info['subtitle']!),
+                        value: size,
+                        groupValue: _currentWhisperModel,
+                        onChanged: (value) {
+                          if (value != null) {
+                            _updateWhisperModel(value);
+                          }
+                        },
+                      );
+                    }),
                   ],
-                ],
+                ),
               ),
+            ],
+            const SizedBox(height: 8),
+            RadioListTile<SttEngine>(
+              title: const Text('Google Speech-to-Text (Online)'),
+              subtitle: const Text('Google Cloud STT. Benötigt Internet.'),
+              value: SttEngine.googleStt,
+              groupValue: _currentSttEngine,
+              onChanged: (value) {
+                if (value != null) {
+                  _updateSttEngine(value);
+                }
+              },
             ),
           ],
         ),
@@ -912,146 +521,304 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  Widget _buildHealthCheckButton() {
+  Widget _buildTextProcessingSection() {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(
-              child: Text(
-                'Check all server health status',
-                style: Theme.of(context).textTheme.titleMedium,
+            Row(
+              children: [
+                Icon(Icons.auto_fix_high, color: Theme.of(context).colorScheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  'Textverarbeitung',
+                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Text nach der Spracherkennung automatisch verarbeiten',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.grey[600],
               ),
             ),
-            if (!_isCheckingHealth)
-              ElevatedButton.icon(
-                icon: Icon(Icons.refresh),
-                label: Text('Check Health'),
-                onPressed: _checkServerHealth,
-              ),
-            if (_isCheckingHealth)
-              SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+            const SizedBox(height: 16),
+            SwitchListTile(
+              title: const Text('Ollama Textverarbeitung'),
+              subtitle: Text(_textProcessingMode == TextProcessingMode.ollamaEnabled
+                ? 'Aktiviert - Text wird mit Ollama verarbeitet'
+                : 'Deaktiviert - Nur Spracherkennung'),
+              value: _textProcessingMode == TextProcessingMode.ollamaEnabled,
+              onChanged: (value) {
+                _updateTextProcessingMode(
+                  value ? TextProcessingMode.ollamaEnabled : TextProcessingMode.disabled
+                );
+              },
+            ),
+            if (_textProcessingMode == TextProcessingMode.ollamaEnabled) ...[
+              const Divider(height: 32),
+              _buildOllamaConfiguration(),
+            ],
           ],
         ),
       ),
     );
   }
 
-  bool _shouldShowFastApiSettings() {
-    return _currentMode == GrammarCorrectionMode.onlineOnly ||
-           _currentMode == GrammarCorrectionMode.hybrid;
-  }
+  Widget _buildOllamaConfiguration() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Ollama Konfiguration',
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 16),
 
-  bool _shouldShowOllamaSettings() {
-    return _currentMode == GrammarCorrectionMode.ollamaOnly ||
-           _currentMode == GrammarCorrectionMode.hybridOllama;
-  }
+        // URL
+        TextField(
+          controller: _ollamaUrlController,
+          decoration: InputDecoration(
+            labelText: 'Ollama Server URL',
+            hintText: 'http://localhost:11434',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
 
-  String _getModeTitle(GrammarCorrectionMode mode) {
-    switch (mode) {
-      case GrammarCorrectionMode.onlineOnly:
-        return 'FastAPI Only';
-      case GrammarCorrectionMode.offlineOnly:
-        return 'Offline Only';
-      case GrammarCorrectionMode.ollamaOnly:
-        return 'Ollama Only';
-      case GrammarCorrectionMode.hybrid:
-        return 'Hybrid FastAPI (Recommended)';
-      case GrammarCorrectionMode.hybridOllama:
-        return 'Hybrid Ollama';
-    }
-  }
+        // Save URL Button
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _saveOllamaUrl,
+            icon: Icon(Icons.save),
+            label: Text('URL speichern & testen'),
+            style: ElevatedButton.styleFrom(
+              padding: EdgeInsets.symmetric(vertical: 12),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
 
-  String _getModeDescription(GrammarCorrectionMode mode) {
-    switch (mode) {
-      case GrammarCorrectionMode.onlineOnly:
-        return 'Always use FastAPI server-based correction. Requires internet connection.';
-      case GrammarCorrectionMode.offlineOnly:
-        return 'Always use local correction. Works without internet.';
-      case GrammarCorrectionMode.ollamaOnly:
-        return 'Always use Ollama AI model. Requires local Ollama installation.';
-      case GrammarCorrectionMode.hybrid:
-        return 'Try FastAPI server first, fallback to local if server unavailable.';
-      case GrammarCorrectionMode.hybridOllama:
-        return 'Try Ollama first, fallback to local if Ollama unavailable.';
-    }
-  }
+        // Available Models
+        if (_isLoadingModels) ...[
+          Row(
+            children: [
+              SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 8),
+              Text('Lade verfügbare Modelle...'),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
+        if (_availableModels.isNotEmpty) ...[
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: DropdownButtonFormField<String>(
+              value: _availableModels.contains(_ollamaModel) ? _ollamaModel : null,
+              decoration: InputDecoration(
+                labelText: 'Verfügbare Modelle',
+                border: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              items: _availableModels.map((model) {
+                return DropdownMenuItem<String>(
+                  value: model,
+                  child: Text(model),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null) {
+                  _ollamaModelController.text = value;
+                  _saveOllamaModel();
+                }
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
 
-  Future<void> _loadAvailableModels() async {
-    final url = _ollamaUrlController.text.trim();
-    if (url.isEmpty) return;
-    
-    setState(() {
-      _isLoadingModels = true;
-    });
-    
-    try {
-      final testProvider = OllamaGrammarProvider(
-        ollamaUrl: url,
-        modelName: 'dummy', // We just need the URL for fetching models
-      );
-      
-      final models = await testProvider.getAvailableModels();
-      setState(() {
-        _availableModels = models;
-        _isLoadingModels = false;
-      });
-      
-      debugPrint('Loaded ${models.length} available models: $models');
-    } catch (e) {
-      debugPrint('Failed to load models: $e');
-      setState(() {
-        _availableModels = [];
-        _isLoadingModels = false;
-      });
-    }
+        // Model Name
+        TextField(
+          controller: _ollamaModelController,
+          decoration: InputDecoration(
+            labelText: 'Modell Name',
+            hintText: 'llama3.2:3b',
+            border: OutlineInputBorder(),
+            helperText: _availableModels.isEmpty
+                ? 'Erst URL speichern, dann werden Modelle angezeigt'
+                : 'Oder eigenen Modellnamen eingeben',
+            suffixIcon: IconButton(
+              icon: Icon(Icons.save),
+              onPressed: _saveOllamaModel,
+              tooltip: 'Modell speichern',
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Template Selector
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<OllamaPromptTemplate>(
+              value: _currentTemplate,
+              decoration: InputDecoration(
+                labelText: 'Prompt-Vorlage',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              ),
+              isExpanded: true,
+              items: OllamaPromptTemplate.values.map((template) {
+                return DropdownMenuItem<OllamaPromptTemplate>(
+                  value: template,
+                  child: Text(
+                    _settingsService.getTemplateDisplayName(template),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                if (value != null && value != _currentTemplate) {
+                  _updatePromptTemplate(value);
+                }
+              },
+            ),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                _settingsService.getTemplateDescription(_currentTemplate),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                ),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+
+        // Prompt Text
+        TextField(
+          controller: _ollamaPromptController,
+          decoration: InputDecoration(
+            labelText: 'Prompt',
+            border: OutlineInputBorder(),
+            helperText: _currentTemplate == OllamaPromptTemplate.custom
+                ? '{TEXT} als Platzhalter verwenden'
+                : 'Nur im "Benutzerdefiniert" Modus editierbar',
+            enabled: _currentTemplate == OllamaPromptTemplate.custom,
+            suffixIcon: _currentTemplate == OllamaPromptTemplate.custom
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.restore),
+                        onPressed: _resetPromptToDefault,
+                        tooltip: 'Zurücksetzen',
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.save),
+                        onPressed: _saveOllamaPrompt,
+                        tooltip: 'Prompt speichern',
+                      ),
+                    ],
+                  )
+                : null,
+          ),
+          maxLines: 5,
+          style: _currentTemplate != OllamaPromptTemplate.custom
+              ? TextStyle(color: Colors.grey[600])
+              : null,
+        ),
+        const SizedBox(height: 16),
+
+        // Status
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _isOllamaHealthy
+              ? Colors.green.withValues(alpha: 0.1)
+              : Colors.grey.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: _isOllamaHealthy ? Colors.green : Colors.grey,
+              width: 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                _isOllamaHealthy ? Icons.check_circle : Icons.info,
+                color: _isOllamaHealthy ? Colors.green : Colors.grey,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _isCheckingHealth
+                    ? 'Prüfe Verbindung...'
+                    : _isOllamaHealthy
+                      ? 'Ollama verbunden ✅'
+                      : 'Noch nicht getestet',
+                  style: TextStyle(
+                    color: _isOllamaHealthy ? Colors.green : Colors.grey[700],
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Grammar Correction Settings'),
+        title: Text('Einstellungen'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            _buildSttEngineSelector(),
+            _buildSttSection(),
             const SizedBox(height: 16),
-            _buildModeSelector(),
+            _buildTextProcessingSection(),
             const SizedBox(height: 16),
-            if (_shouldShowFastApiSettings())
-              _buildServerSettings(),
-            if (_shouldShowFastApiSettings())
-              const SizedBox(height: 16),
-            if (_shouldShowOllamaSettings())
-              _buildOllamaSettings(),
-            if (_shouldShowOllamaSettings())
-              const SizedBox(height: 16),
-            if (_currentMode != GrammarCorrectionMode.offlineOnly)
-              _buildHealthCheckButton(),
-            if (_currentMode != GrammarCorrectionMode.offlineOnly)
-              const SizedBox(height: 16),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () async {
                   await _settingsService.resetToDefaults();
                   _loadSettings();
-                  _showSnackBar('Settings reset to defaults');
+                  _showSnackBar('Einstellungen zurückgesetzt');
                 },
                 icon: Icon(Icons.restore),
-                label: Text('Reset to Defaults'),
+                label: Text('Zurücksetzen'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.orange,
                   foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
             ),
@@ -1063,9 +830,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
-    _serverUrlController.dispose();
     _ollamaUrlController.dispose();
     _ollamaModelController.dispose();
+    _ollamaPromptController.dispose();
     super.dispose();
   }
 }
@@ -1074,7 +841,7 @@ class _SettingsPageState extends State<SettingsPage> {
 class _WhisperDownloadDialog extends StatefulWidget {
   final String modelName;
   final String modelDir;
-  
+
   const _WhisperDownloadDialog({
     required this.modelName,
     required this.modelDir,
@@ -1114,13 +881,13 @@ class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
           }
         },
       );
-      
+
       if (mounted) {
         setState(() {
           _isComplete = true;
           _status = 'Download abgeschlossen!';
         });
-        
+
         await Future.delayed(const Duration(seconds: 1));
         if (mounted) {
           Navigator.of(context).pop(true);
@@ -1144,8 +911,8 @@ class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async => _isComplete || _error != null,
+    return PopScope(
+      canPop: _isComplete || _error != null,
       child: AlertDialog(
         title: Row(
           children: [
@@ -1220,4 +987,4 @@ class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
       ),
     );
   }
-} 
+}

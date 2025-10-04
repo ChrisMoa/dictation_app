@@ -10,7 +10,6 @@ import 'package:dictation_app/features/overlay/presentation/bloc/overlay_state.d
 import 'package:dictation_app/features/overlay/domain/entities/overlay_config.dart';
 import 'package:dictation_app/features/settings/presentation/pages/settings_page.dart';
 import 'package:dictation_app/core/services/ai_grammar_service.dart';
-import 'package:dictation_app/core/services/hybrid_grammar_provider.dart';
 import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
 
@@ -47,35 +46,8 @@ class _DictationHomePageState extends State<DictationHomePage> {
   }
 
   void _setupFallbackListener() {
-    // Setup fallback notification listener for hybrid provider
-    try {
-      final aiService = getIt<AIGrammarService>();
-      final provider = aiService.currentProvider;
-      if (provider is HybridGrammarProvider) {
-        provider.setFallbackCallback((message, isWarning) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Row(
-                  children: [
-                    Icon(
-                      isWarning ? Icons.warning : Icons.info,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(message)),
-                  ],
-                ),
-                backgroundColor: isWarning ? Colors.orange : Colors.blue,
-                duration: Duration(seconds: isWarning ? 5 : 3),
-              ),
-            );
-          }
-        });
-      }
-    } catch (e) {
-      debugPrint('Error setting up fallback listener: $e');
-    }
+    // No longer needed with simplified text processing
+    // Text processing now only uses Ollama or is disabled
   }
 
   @override
