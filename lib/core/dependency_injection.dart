@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:get_it/get_it.dart';
 import 'package:speech_to_text/speech_to_text.dart';
@@ -8,6 +9,8 @@ import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/features/dictation/data/repositories/speech_repository_impl.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
 import 'package:dictation_app/features/dictation/data/datasources/whisper_datasource.dart';
+import 'package:dictation_app/features/dictation/data/datasources/linux_stt_datasource.dart';
+import 'package:dictation_app/features/dictation/data/datasources/whisper_cli_linux_datasource.dart';
 import 'package:dictation_app/features/dictation/domain/repositories/speech_repository.dart';
 import 'package:dictation_app/features/dictation/domain/usecases/start_listening.dart';
 import 'package:dictation_app/features/dictation/domain/usecases/stop_listening.dart';
@@ -81,7 +84,13 @@ Future<void> setupDependencyInjection() async {
         final settingsService = getIt<SettingsService>();
         final sttEngine = settingsService.sttEngine;
         debugPrint('DI: ⚙️ Selecting STT engine: ${sttEngine.name}');
-        
+
+        // Use Linux-specific implementation on Linux (neither whisper nor speech_to_text support Linux)
+        if (Platform.isLinux) {
+          debugPrint('DI: ⚙️ Linux detected - using Whisper CLI datasource');
+          return WhisperCliLinuxDatasource();
+        }
+
         if (sttEngine == SttEngine.whisper) {
           debugPrint('DI: ✅ Using Whisper (Offline) as primary STT');
           return getIt<WhisperDatasourceImpl>();
