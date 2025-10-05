@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
@@ -36,6 +37,13 @@ class SpeechDatasourceImpl implements SpeechDatasource {
   @override
   Future<bool> checkPermissions() async {
     debugPrint('SpeechDatasource: Checking permissions');
+
+    // On Linux, skip permission check as speech_to_text doesn't support it
+    if (Platform.isLinux) {
+      debugPrint('SpeechDatasource: Linux detected - skipping permission check');
+      return true;
+    }
+
     final hasPermission = await speechToText.hasPermission;
     debugPrint('SpeechDatasource: Has permission: $hasPermission');
     return hasPermission;

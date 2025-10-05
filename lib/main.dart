@@ -1,3 +1,4 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
@@ -54,9 +55,14 @@ class _DictationAppState extends State<DictationApp> {
   }
 
   void _setupOverlayListener() {
+    // Overlay is only supported on Android
+    if (!Platform.isAndroid) {
+      return;
+    }
+
     FlutterOverlayWindow.overlayListener.listen((data) {
         final action = data['action'] as String?;
-        
+
         switch (action) {
           case 'start_recording':
             _startDictationFromOverlay();
