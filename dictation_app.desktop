@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dictation App
+Comment=Speech-to-Text Dictation Application
+Exec=/opt/dictation_app/dictation_app
+Icon=/usr/share/icons/hicolor/256x256/apps/dictation_app.png
+Terminal=false
+Categories=Utility;Office;AudioVideo;Audio;
+StartupNotify=true
+Keywords=dictation;speech;text;voice;
