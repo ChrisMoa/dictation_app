@@ -58,9 +58,9 @@ app.*.map.json
 # windows/**
 # macos/**
 
-*/flutter
-windows/runner
-macos/Flutter/GeneratedPluginRegistrant.swift
+# */flutter
+# windows/runner
+# macos/Flutter/GeneratedPluginRegistrant.swift
 
 *generated*
 pubspec.lock
