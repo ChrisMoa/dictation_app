@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:dictation_app/core/theme/app_theme.dart';
+import 'package:dictation_app/core/theme/components/components.dart';
 import 'package:dictation_app/core/services/settings_service.dart';
 import 'package:dictation_app/core/services/ollama_grammar_provider.dart';
 import 'package:dictation_app/core/services/whisper_download_service.dart';
@@ -14,8 +15,10 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage>
+    with SingleTickerProviderStateMixin {
   late SettingsService _settingsService;
+  late TabController _tabController;
 
   // STT Settings
   SttEngine _currentSttEngine = SttEngine.whisper;
@@ -39,6 +42,7 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _settingsService = getIt<SettingsService>();
+    _tabController = TabController(length: 2, vsync: this);
     _loadSettings();
   }
 
@@ -62,9 +66,7 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _checkOllamaHealth() async {
-    setState(() {
-      _isCheckingHealth = true;
-    });
+    setState(() => _isCheckingHealth = true);
 
     try {
       final testProvider = OllamaGrammarProvider(
@@ -74,17 +76,11 @@ class _SettingsPageState extends State<SettingsPage> {
       );
 
       final isHealthy = await testProvider.isServerHealthy();
-      setState(() {
-        _isOllamaHealthy = isHealthy;
-      });
+      setState(() => _isOllamaHealthy = isHealthy);
     } catch (e) {
-      setState(() {
-        _isOllamaHealthy = false;
-      });
+      setState(() => _isOllamaHealthy = false);
     } finally {
-      setState(() {
-        _isCheckingHealth = false;
-      });
+      setState(() => _isCheckingHealth = false);
     }
   }
 
@@ -92,9 +88,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final url = _ollamaUrlController.text.trim();
     if (url.isEmpty) return;
 
-    setState(() {
-      _isLoadingModels = true;
-    });
+    setState(() => _isLoadingModels = true);
 
     try {
       final testProvider = OllamaGrammarProvider(
@@ -117,49 +111,30 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _updateTextProcessingMode(TextProcessingMode newMode) async {
     await _settingsService.setTextProcessingMode(newMode);
-    setState(() {
-      _textProcessingMode = newMode;
-    });
+    setState(() => _textProcessingMode = newMode);
 
     if (newMode == TextProcessingMode.ollamaEnabled) {
       _checkOllamaHealth();
       _loadAvailableModels();
     }
 
-    _showSnackBar('Textverarbeitung: ${newMode == TextProcessingMode.disabled ? "Deaktiviert" : "Ollama aktiviert"}');
+    _showSnackBar(newMode == TextProcessingMode.disabled 
+      ? 'Textverarbeitung deaktiviert' 
+      : 'Ollama aktiviert');
   }
 
   Future<void> _updateSttEngine(SttEngine newEngine) async {
     await _settingsService.setSttEngine(newEngine);
-    setState(() {
-      _currentSttEngine = newEngine;
-    });
+    setState(() => _currentSttEngine = newEngine);
 
     if (mounted) {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.restart_alt, color: Colors.orange),
-              SizedBox(width: 8),
-              Text('App-Neustart erforderlich'),
-            ],
-          ),
-          content: Text(
-            'Die STT-Engine wurde auf ${newEngine == SttEngine.whisper ? "Whisper (Offline)" : "Google STT (Online)"} umgestellt.\n\n'
-            'Bitte starte die App neu, damit die Änderung wirksam wird.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                Navigator.of(context).pop();
-              },
-              child: const Text('OK - App schließen'),
-            ),
-          ],
+        builder: (context) => _RestartDialog(
+          engineName: newEngine == SttEngine.whisper 
+            ? 'Whisper (Offline)' 
+            : 'Google STT (Online)',
         ),
       );
     }
@@ -167,11 +142,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _updateWhisperModel(WhisperModelSize newModel) async {
     await _settingsService.setWhisperModelSize(newModel);
-    setState(() {
-      _currentWhisperModel = newModel;
-    });
-
-    _showSnackBar('Modell auf ${_getModelInfo(newModel)['title']} geändert. Nutze "Modell laden" um es herunterzuladen.');
+    setState(() => _currentWhisperModel = newModel);
+    _showSnackBar('Modell geändert - bitte herunterladen');
   }
 
   Future<void> _updatePromptTemplate(OllamaPromptTemplate newTemplate) async {
@@ -188,59 +160,36 @@ class _SettingsPageState extends State<SettingsPage> {
     if (newTemplate != OllamaPromptTemplate.custom) {
       await _settingsService.setOllamaPrompt(templatePrompt);
     }
-
-    _showSnackBar(newTemplate == OllamaPromptTemplate.custom
-      ? 'Benutzerdefinierter Modus aktiviert'
-      : 'Template: "${_settingsService.getTemplateDisplayName(newTemplate)}"');
   }
 
   Future<void> _saveOllamaUrl() async {
     final newUrl = _ollamaUrlController.text.trim();
-
     if (newUrl.isEmpty) {
-      _showSnackBar('Ollama URL darf nicht leer sein', isError: true);
+      _showSnackBar('URL darf nicht leer sein', isError: true);
       return;
     }
 
     await _settingsService.setOllamaUrl(newUrl);
-    setState(() {
-      _ollamaUrl = newUrl;
-    });
-
-    _showSnackBar('URL gespeichert - teste Verbindung...');
-
-    // Automatically test connection and load models
+    setState(() => _ollamaUrl = newUrl);
+    _showSnackBar('URL gespeichert');
     await _testOllamaConnection();
-    if (_isOllamaHealthy) {
-      await _loadAvailableModels();
-    }
   }
 
   Future<void> _saveOllamaModel() async {
     final newModel = _ollamaModelController.text.trim();
-
     if (newModel.isEmpty) {
-      _showSnackBar('Ollama Modell darf nicht leer sein', isError: true);
+      _showSnackBar('Modell darf nicht leer sein', isError: true);
       return;
     }
 
     await _settingsService.setOllamaModel(newModel);
-    setState(() {
-      _ollamaModel = newModel;
-    });
-
+    setState(() => _ollamaModel = newModel);
     _showSnackBar('Modell gespeichert');
   }
 
   Future<void> _saveOllamaPrompt() async {
     final newPrompt = _ollamaPromptController.text.trim();
-
-    if (newPrompt.isEmpty) {
-      _showSnackBar('Ollama Prompt darf nicht leer sein', isError: true);
-      return;
-    }
-
-    if (!newPrompt.contains('{TEXT}')) {
+    if (newPrompt.isEmpty || !newPrompt.contains('{TEXT}')) {
       _showSnackBar('Prompt muss {TEXT} Platzhalter enthalten', isError: true);
       return;
     }
@@ -249,62 +198,46 @@ class _SettingsPageState extends State<SettingsPage> {
     _showSnackBar('Prompt gespeichert');
   }
 
-  void _resetPromptToDefault() {
-    final defaultPrompt = _settingsService.getPromptForTemplate(_currentTemplate);
-    setState(() {
-      _ollamaPromptController.text = defaultPrompt;
-    });
-    _showSnackBar('Prompt wiederhergestellt');
-  }
-
   Future<void> _testOllamaConnection() async {
     final url = _ollamaUrlController.text.trim();
+    if (url.isEmpty) return;
 
-    if (url.isEmpty) {
-      _showSnackBar('Bitte URL eingeben', isError: true);
-      return;
-    }
-
-    setState(() {
-      _isCheckingHealth = true;
-    });
+    setState(() => _isCheckingHealth = true);
 
     try {
-      // Test connection by fetching available models
       final testProvider = OllamaGrammarProvider(
         ollamaUrl: url,
-        modelName: 'dummy', // Dummy model just to create provider
+        modelName: 'dummy',
       );
 
       final models = await testProvider.getAvailableModels();
-
       setState(() {
         _isOllamaHealthy = models.isNotEmpty;
         _isCheckingHealth = false;
         _availableModels = models;
       });
 
-      if (models.isNotEmpty) {
-        _showSnackBar('✅ Ollama verbunden! ${models.length} Modelle gefunden.');
-      } else {
-        _showSnackBar('❌ Keine Modelle gefunden', isError: true);
-      }
+      _showSnackBar(
+        models.isNotEmpty 
+          ? '${models.length} Modelle gefunden' 
+          : 'Keine Modelle gefunden',
+        isError: models.isEmpty,
+      );
     } catch (e) {
       setState(() {
         _isOllamaHealthy = false;
         _isCheckingHealth = false;
         _availableModels = [];
       });
-      _showSnackBar('❌ Verbindung fehlgeschlagen: $e', isError: true);
+      _showSnackBar('Verbindung fehlgeschlagen', isError: true);
     }
   }
 
   Future<void> _downloadWhisperModel() async {
-    final modelSize = _currentWhisperModel;
-    final modelInfo = _getModelInfo(modelSize);
+    final modelInfo = _getModelInfo(_currentWhisperModel);
     String modelName;
 
-    switch (modelSize) {
+    switch (_currentWhisperModel) {
       case WhisperModelSize.tiny:
         modelName = 'tiny';
         break;
@@ -326,503 +259,66 @@ class _SettingsPageState extends State<SettingsPage> {
 
     final modelExists = await WhisperDownloadService.modelExists(modelName, modelDir);
 
-    if (modelExists) {
+    if (modelExists && mounted) {
       final size = await WhisperDownloadService.getModelSize(modelName, modelDir);
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Row(
-              children: [
-                Icon(Icons.check_circle, color: Colors.green),
-                SizedBox(width: 8),
-                Text('Modell vorhanden'),
-              ],
-            ),
-            content: Text(
-              'Das ${modelInfo['title']} Modell ist bereits heruntergeladen.\n\n'
-              'Größe: ${(size! / 1024 / 1024).toStringAsFixed(1)} MB\n\n'
-              'Möchtest du es erneut herunterladen?',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Abbrechen'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _startDownload(modelName, modelDir, modelInfo);
-                },
-                child: const Text('Erneut laden'),
-              ),
-            ],
-          ),
-        );
-      }
-      return;
+      final shouldRedownload = await showDialog<bool>(
+        context: context,
+        builder: (context) => _ModelExistsDialog(
+          modelTitle: modelInfo['title']!,
+          sizeInMb: (size! / 1024 / 1024).toStringAsFixed(1),
+        ),
+      );
+
+      if (shouldRedownload != true) return;
     }
 
-    _startDownload(modelName, modelDir, modelInfo);
-  }
+    if (mounted) {
+      final result = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _WhisperDownloadDialog(
+          modelName: modelName,
+          modelDir: modelDir,
+        ),
+      );
 
-  Future<void> _startDownload(String modelName, String modelDir, Map<String, String> modelInfo) async {
-    if (!mounted) return;
-
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => _WhisperDownloadDialog(
-        modelName: modelName,
-        modelDir: modelDir,
-      ),
-    );
-
-    if (result == true && mounted) {
-      _showSnackBar('✅ ${modelInfo['title']} erfolgreich heruntergeladen!');
-    } else if (result == false && mounted) {
-      _showSnackBar('❌ Download fehlgeschlagen', isError: true);
+      if (result == true) {
+        _showSnackBar('${modelInfo['title']} heruntergeladen');
+      }
     }
   }
 
   Map<String, String> _getModelInfo(WhisperModelSize size) {
     switch (size) {
       case WhisperModelSize.tiny:
-        return {
-          'title': 'Tiny (~75 MB)',
-          'subtitle': 'Schnell, niedrige Qualität. Gut zum Testen.',
-        };
+        return {'title': 'Tiny', 'size': '~75 MB', 'desc': 'Schnell, niedrige Qualität'};
       case WhisperModelSize.base:
-        return {
-          'title': 'Base (~150 MB) - EMPFOHLEN',
-          'subtitle': 'Gute Balance zwischen Qualität und Geschwindigkeit.',
-        };
+        return {'title': 'Base', 'size': '~150 MB', 'desc': 'Gute Balance (Empfohlen)'};
       case WhisperModelSize.small:
-        return {
-          'title': 'Small (~500 MB)',
-          'subtitle': 'Sehr gute Qualität. ⚠️ Könnte instabil sein.',
-        };
+        return {'title': 'Small', 'size': '~500 MB', 'desc': 'Beste Qualität'};
     }
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.green,
-        duration: Duration(seconds: 3),
-      ),
-    );
-  }
-
-  // ============ UI WIDGETS ============
-
-  Widget _buildSttSection() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        content: Row(
           children: [
-            Row(
-              children: [
-                Icon(Icons.mic, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Spracherkennung (STT)',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
+            Icon(
+              isError ? Icons.error_outline : Icons.check_circle_outline,
+              color: Colors.white,
+              size: 20,
             ),
-            const SizedBox(height: 8),
-            Text(
-              'Wähle die Engine für Speech-to-Text',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 16),
-            RadioListTile<SttEngine>(
-              title: const Text('Whisper (Offline) - EMPFOHLEN ✅'),
-              subtitle: const Text('Lokales Whisper-Modell. Funktioniert offline.'),
-              value: SttEngine.whisper,
-              groupValue: _currentSttEngine,
-              onChanged: (value) {
-                if (value != null) {
-                  _updateSttEngine(value);
-                }
-              },
-            ),
-            if (_currentSttEngine == SttEngine.whisper) ...[
-              const SizedBox(height: 8),
-              Padding(
-                padding: const EdgeInsets.only(left: 16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Whisper Modell-Größe:',
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
-                        ),
-                        ElevatedButton.icon(
-                          onPressed: () => _downloadWhisperModel(),
-                          icon: const Icon(Icons.download, size: 16),
-                          label: const Text('Laden', style: TextStyle(fontSize: 13)),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    ...WhisperModelSize.values.map((size) {
-                      final info = _getModelInfo(size);
-                      return RadioListTile<WhisperModelSize>(
-                        dense: true,
-                        title: Text(info['title']!),
-                        subtitle: Text(info['subtitle']!),
-                        value: size,
-                        groupValue: _currentWhisperModel,
-                        onChanged: (value) {
-                          if (value != null) {
-                            _updateWhisperModel(value);
-                          }
-                        },
-                      );
-                    }),
-                  ],
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-            RadioListTile<SttEngine>(
-              title: const Text('Google Speech-to-Text (Online)'),
-              subtitle: const Text('Google Cloud STT. Benötigt Internet.'),
-              value: SttEngine.googleStt,
-              groupValue: _currentSttEngine,
-              onChanged: (value) {
-                if (value != null) {
-                  _updateSttEngine(value);
-                }
-              },
-            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(child: Text(message)),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildTextProcessingSection() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.auto_fix_high, color: Theme.of(context).colorScheme.primary),
-                const SizedBox(width: 8),
-                Text(
-                  'Textverarbeitung',
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Text nach der Spracherkennung automatisch verarbeiten',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 16),
-            SwitchListTile(
-              title: const Text('Ollama Textverarbeitung'),
-              subtitle: Text(_textProcessingMode == TextProcessingMode.ollamaEnabled
-                ? 'Aktiviert - Text wird mit Ollama verarbeitet'
-                : 'Deaktiviert - Nur Spracherkennung'),
-              value: _textProcessingMode == TextProcessingMode.ollamaEnabled,
-              onChanged: (value) {
-                _updateTextProcessingMode(
-                  value ? TextProcessingMode.ollamaEnabled : TextProcessingMode.disabled
-                );
-              },
-            ),
-            if (_textProcessingMode == TextProcessingMode.ollamaEnabled) ...[
-              const Divider(height: 32),
-              _buildOllamaConfiguration(),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOllamaConfiguration() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Ollama Konfiguration',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // URL
-        TextField(
-          controller: _ollamaUrlController,
-          decoration: InputDecoration(
-            labelText: 'Ollama Server URL',
-            hintText: 'http://localhost:11434',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Save URL Button
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: _saveOllamaUrl,
-            icon: Icon(Icons.save),
-            label: Text('URL speichern & testen'),
-            style: ElevatedButton.styleFrom(
-              padding: EdgeInsets.symmetric(vertical: 12),
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Available Models
-        if (_isLoadingModels) ...[
-          Row(
-            children: [
-              SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 8),
-              Text('Lade verfügbare Modelle...'),
-            ],
-          ),
-          const SizedBox(height: 16),
-        ],
-        if (_availableModels.isNotEmpty) ...[
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: DropdownButtonFormField<String>(
-              value: _availableModels.contains(_ollamaModel) ? _ollamaModel : null,
-              decoration: InputDecoration(
-                labelText: 'Verfügbare Modelle',
-                border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
-              items: _availableModels.map((model) {
-                return DropdownMenuItem<String>(
-                  value: model,
-                  child: Text(model),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null) {
-                  _ollamaModelController.text = value;
-                  _saveOllamaModel();
-                }
-              },
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        // Model Name
-        TextField(
-          controller: _ollamaModelController,
-          decoration: InputDecoration(
-            labelText: 'Modell Name',
-            hintText: 'llama3.2:3b',
-            border: OutlineInputBorder(),
-            helperText: _availableModels.isEmpty
-                ? 'Erst URL speichern, dann werden Modelle angezeigt'
-                : 'Oder eigenen Modellnamen eingeben',
-            suffixIcon: IconButton(
-              icon: Icon(Icons.save),
-              onPressed: _saveOllamaModel,
-              tooltip: 'Modell speichern',
-            ),
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        // Template Selector
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            DropdownButtonFormField<OllamaPromptTemplate>(
-              value: _currentTemplate,
-              decoration: InputDecoration(
-                labelText: 'Prompt-Vorlage',
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
-              isExpanded: true,
-              items: OllamaPromptTemplate.values.map((template) {
-                return DropdownMenuItem<OllamaPromptTemplate>(
-                  value: template,
-                  child: Text(
-                    _settingsService.getTemplateDisplayName(template),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                );
-              }).toList(),
-              onChanged: (value) {
-                if (value != null && value != _currentTemplate) {
-                  _updatePromptTemplate(value);
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Text(
-                _settingsService.getTemplateDescription(_currentTemplate),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.grey[600],
-                ),
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // Prompt Text
-        TextField(
-          controller: _ollamaPromptController,
-          decoration: InputDecoration(
-            labelText: 'Prompt',
-            border: OutlineInputBorder(),
-            helperText: _currentTemplate == OllamaPromptTemplate.custom
-                ? '{TEXT} als Platzhalter verwenden'
-                : 'Nur im "Benutzerdefiniert" Modus editierbar',
-            enabled: _currentTemplate == OllamaPromptTemplate.custom,
-            suffixIcon: _currentTemplate == OllamaPromptTemplate.custom
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.restore),
-                        onPressed: _resetPromptToDefault,
-                        tooltip: 'Zurücksetzen',
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.save),
-                        onPressed: _saveOllamaPrompt,
-                        tooltip: 'Prompt speichern',
-                      ),
-                    ],
-                  )
-                : null,
-          ),
-          maxLines: 5,
-          style: _currentTemplate != OllamaPromptTemplate.custom
-              ? TextStyle(color: Colors.grey[600])
-              : null,
-        ),
-        const SizedBox(height: 16),
-
-        // Status
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: _isOllamaHealthy
-              ? Colors.green.withValues(alpha: 0.1)
-              : Colors.grey.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: _isOllamaHealthy ? Colors.green : Colors.grey,
-              width: 1,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                _isOllamaHealthy ? Icons.check_circle : Icons.info,
-                color: _isOllamaHealthy ? Colors.green : Colors.grey,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _isCheckingHealth
-                    ? 'Prüfe Verbindung...'
-                    : _isOllamaHealthy
-                      ? 'Ollama verbunden ✅'
-                      : 'Noch nicht getestet',
-                  style: TextStyle(
-                    color: _isOllamaHealthy ? Colors.green : Colors.grey[700],
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Einstellungen'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            _buildSttSection(),
-            const SizedBox(height: 16),
-            _buildTextProcessingSection(),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  await _settingsService.resetToDefaults();
-                  _loadSettings();
-                  _showSnackBar('Einstellungen zurückgesetzt');
-                },
-                icon: Icon(Icons.restore),
-                label: Text('Zurücksetzen'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.orange,
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                ),
-              ),
-            ),
-          ],
+        backgroundColor: isError ? AppColors.error : AppColors.success,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(AppSpacing.md),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
       ),
     );
@@ -830,14 +326,535 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
+    _tabController.dispose();
     _ollamaUrlController.dispose();
     _ollamaModelController.dispose();
     _ollamaPromptController.dispose();
     super.dispose();
   }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Einstellungen'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(text: 'Spracherkennung'),
+            Tab(text: 'Textverarbeitung'),
+          ],
+          labelColor: theme.colorScheme.primary,
+          unselectedLabelColor: isDark 
+            ? AppColors.textSecondaryDark 
+            : AppColors.textSecondaryLight,
+          indicatorColor: theme.colorScheme.primary,
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildSttTab(),
+          _buildTextProcessingTab(),
+        ],
+      ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: AppButton(
+            label: 'Alle Einstellungen zurücksetzen',
+            icon: Icons.restore_rounded,
+            style: AppButtonStyle.secondary,
+            expanded: true,
+            onPressed: () async {
+              await _settingsService.resetToDefaults();
+              _loadSettings();
+              _showSnackBar('Einstellungen zurückgesetzt');
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSttTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Engine selection
+          AppSectionCard(
+            title: 'STT Engine',
+            subtitle: 'Wähle die Spracherkennungs-Engine',
+            icon: Icons.mic_rounded,
+            child: Column(
+              children: [
+                _EngineOption(
+                  title: 'Whisper (Offline)',
+                  subtitle: 'Lokales Modell, funktioniert ohne Internet',
+                  icon: Icons.offline_bolt_rounded,
+                  isSelected: _currentSttEngine == SttEngine.whisper,
+                  recommended: true,
+                  onTap: () => _updateSttEngine(SttEngine.whisper),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                _EngineOption(
+                  title: 'Google STT (Online)',
+                  subtitle: 'Google Cloud, benötigt Internet',
+                  icon: Icons.cloud_rounded,
+                  isSelected: _currentSttEngine == SttEngine.googleStt,
+                  onTap: () => _updateSttEngine(SttEngine.googleStt),
+                ),
+              ],
+            ),
+          ),
+          
+          const SizedBox(height: AppSpacing.md),
+          
+          // Whisper settings (if selected)
+          if (_currentSttEngine == SttEngine.whisper)
+            AppSectionCard(
+              title: 'Whisper Modell',
+              subtitle: 'Wähle die Modellgröße',
+              icon: Icons.tune_rounded,
+              actions: [
+                AppButton(
+                  label: 'Laden',
+                  icon: Icons.download_rounded,
+                  onPressed: _downloadWhisperModel,
+                ),
+              ],
+              child: Column(
+                children: WhisperModelSize.values.map((size) {
+                  final info = _getModelInfo(size);
+                  return _ModelOption(
+                    title: info['title']!,
+                    subtitle: '${info['size']} - ${info['desc']}',
+                    isSelected: _currentWhisperModel == size,
+                    isRecommended: size == WhisperModelSize.base,
+                    onTap: () => _updateWhisperModel(size),
+                  );
+                }).toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTextProcessingTab() {
+    final theme = Theme.of(context);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Enable/Disable
+          AppSectionCard(
+            title: 'Ollama Textverarbeitung',
+            subtitle: 'KI-gestützte Textkorrektur',
+            icon: Icons.auto_fix_high_rounded,
+            child: Column(
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    _textProcessingMode == TextProcessingMode.ollamaEnabled
+                      ? 'Aktiviert'
+                      : 'Deaktiviert',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  subtitle: Text(
+                    _textProcessingMode == TextProcessingMode.ollamaEnabled
+                      ? 'Text wird nach der Erkennung verarbeitet'
+                      : 'Nur Spracherkennung ohne Nachbearbeitung',
+                  ),
+                  value: _textProcessingMode == TextProcessingMode.ollamaEnabled,
+                  onChanged: (value) => _updateTextProcessingMode(
+                    value ? TextProcessingMode.ollamaEnabled : TextProcessingMode.disabled,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          
+          // Ollama config (if enabled)
+          if (_textProcessingMode == TextProcessingMode.ollamaEnabled) ...[
+            const SizedBox(height: AppSpacing.md),
+            
+            // Connection status
+            AppStatusBanner(
+              type: _isOllamaHealthy ? AppStatusType.success : AppStatusType.neutral,
+              message: _isCheckingHealth 
+                ? 'Verbindung wird geprüft...'
+                : _isOllamaHealthy 
+                  ? 'Ollama verbunden'
+                  : 'Nicht verbunden',
+              isLoading: _isCheckingHealth,
+              onAction: _testOllamaConnection,
+              actionLabel: 'Testen',
+            ),
+            
+            const SizedBox(height: AppSpacing.md),
+            
+            // Server config
+            AppSectionCard(
+              title: 'Server Konfiguration',
+              icon: Icons.dns_rounded,
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _ollamaUrlController,
+                    decoration: InputDecoration(
+                      labelText: 'Server URL',
+                      hintText: 'http://localhost:11434',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.save_rounded),
+                        onPressed: _saveOllamaUrl,
+                        tooltip: 'Speichern',
+                      ),
+                    ),
+                    onSubmitted: (_) => _saveOllamaUrl(),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  
+                  // Model dropdown
+                  if (_availableModels.isNotEmpty) ...[
+                    DropdownButtonFormField<String>(
+                      value: _availableModels.contains(_ollamaModel) ? _ollamaModel : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Verfügbare Modelle',
+                      ),
+                      items: _availableModels.map((model) {
+                        return DropdownMenuItem<String>(
+                          value: model,
+                          child: Text(model),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          _ollamaModelController.text = value;
+                          _saveOllamaModel();
+                        }
+                      },
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                  ] else if (_isLoadingModels) ...[
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: AppSpacing.sm),
+                          Text('Lade Modelle...'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  
+                  TextField(
+                    controller: _ollamaModelController,
+                    decoration: InputDecoration(
+                      labelText: 'Modell Name',
+                      hintText: 'llama3.2:3b',
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.save_rounded),
+                        onPressed: _saveOllamaModel,
+                        tooltip: 'Speichern',
+                      ),
+                    ),
+                    onSubmitted: (_) => _saveOllamaModel(),
+                  ),
+                ],
+              ),
+            ),
+            
+            const SizedBox(height: AppSpacing.md),
+            
+            // Prompt template
+            AppSectionCard(
+              title: 'Prompt Vorlage',
+              icon: Icons.edit_note_rounded,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  DropdownButtonFormField<OllamaPromptTemplate>(
+                    value: _currentTemplate,
+                    decoration: const InputDecoration(
+                      labelText: 'Vorlage wählen',
+                    ),
+                    isExpanded: true,
+                    items: OllamaPromptTemplate.values.map((template) {
+                      return DropdownMenuItem<OllamaPromptTemplate>(
+                        value: template,
+                        child: Text(
+                          _settingsService.getTemplateDisplayName(template),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      if (value != null) _updatePromptTemplate(value);
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    _settingsService.getTemplateDescription(_currentTemplate),
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  TextField(
+                    controller: _ollamaPromptController,
+                    decoration: InputDecoration(
+                      labelText: 'Prompt',
+                      helperText: '{TEXT} als Platzhalter verwenden',
+                      enabled: _currentTemplate == OllamaPromptTemplate.custom,
+                      suffixIcon: _currentTemplate == OllamaPromptTemplate.custom
+                        ? IconButton(
+                            icon: const Icon(Icons.save_rounded),
+                            onPressed: _saveOllamaPrompt,
+                            tooltip: 'Speichern',
+                          )
+                        : null,
+                    ),
+                    maxLines: 4,
+                    onSubmitted: (_) => _saveOllamaPrompt(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
-/// Dialog widget for showing Whisper download progress
+// Helper Widgets
+
+class _EngineOption extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final IconData icon;
+  final bool isSelected;
+  final bool recommended;
+  final VoidCallback onTap;
+
+  const _EngineOption({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.isSelected,
+    this.recommended = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Material(
+      color: isSelected 
+        ? theme.colorScheme.primary.withValues(alpha: 0.1)
+        : Colors.transparent,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(
+              color: isSelected 
+                ? theme.colorScheme.primary 
+                : (isDark ? AppColors.borderDark : AppColors.borderLight),
+              width: isSelected ? 2 : 1,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                icon,
+                color: isSelected 
+                  ? theme.colorScheme.primary 
+                  : theme.colorScheme.onSurface,
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          title,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            color: isSelected ? theme.colorScheme.primary : null,
+                          ),
+                        ),
+                        if (recommended) ...[
+                          const SizedBox(width: AppSpacing.sm),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: AppColors.success.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text(
+                              'Empfohlen',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: AppColors.success,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    Text(subtitle, style: theme.textTheme.bodySmall),
+                  ],
+                ),
+              ),
+              if (isSelected)
+                Icon(Icons.check_circle_rounded, color: theme.colorScheme.primary),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ModelOption extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final bool isSelected;
+  final bool isRecommended;
+  final VoidCallback onTap;
+
+  const _ModelOption({
+    required this.title,
+    required this.subtitle,
+    required this.isSelected,
+    this.isRecommended = false,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return RadioListTile<bool>(
+      value: true,
+      groupValue: isSelected,
+      onChanged: (_) => onTap(),
+      contentPadding: EdgeInsets.zero,
+      title: Row(
+        children: [
+          Text(title),
+          if (isRecommended) ...[
+            const SizedBox(width: AppSpacing.sm),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppColors.success.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'Empfohlen',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.success,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      subtitle: Text(subtitle, style: theme.textTheme.bodySmall),
+    );
+  }
+}
+
+class _RestartDialog extends StatelessWidget {
+  final String engineName;
+
+  const _RestartDialog({required this.engineName});
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      icon: const Icon(Icons.restart_alt_rounded, size: 48, color: AppColors.warning),
+      title: const Text('Neustart erforderlich'),
+      content: Text(
+        'Die Engine wurde auf $engineName umgestellt.\n\n'
+        'Bitte starte die App neu, damit die Änderung wirksam wird.',
+      ),
+      actions: [
+        AppButton(
+          label: 'OK',
+          onPressed: () {
+            Navigator.of(context).pop();
+            Navigator.of(context).pop();
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _ModelExistsDialog extends StatelessWidget {
+  final String modelTitle;
+  final String sizeInMb;
+
+  const _ModelExistsDialog({
+    required this.modelTitle,
+    required this.sizeInMb,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      icon: const Icon(Icons.check_circle_rounded, size: 48, color: AppColors.success),
+      title: const Text('Modell vorhanden'),
+      content: Text(
+        'Das $modelTitle Modell ist bereits heruntergeladen.\n'
+        'Größe: $sizeInMb MB\n\n'
+        'Erneut herunterladen?',
+      ),
+      actions: [
+        AppButton(
+          label: 'Abbrechen',
+          style: AppButtonStyle.secondary,
+          onPressed: () => Navigator.of(context).pop(false),
+        ),
+        AppButton(
+          label: 'Erneut laden',
+          onPressed: () => Navigator.of(context).pop(true),
+        ),
+      ],
+    );
+  }
+}
+
 class _WhisperDownloadDialog extends StatefulWidget {
   final String modelName;
   final String modelDir;
@@ -876,7 +893,7 @@ class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
               _progress = progress;
               _downloaded = downloaded;
               _total = total;
-              _status = 'Lade Whisper ${widget.modelName} Modell...';
+              _status = 'Lade ${widget.modelName} Modell...';
             });
           }
         },
@@ -887,11 +904,8 @@ class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
           _isComplete = true;
           _status = 'Download abgeschlossen!';
         });
-
         await Future.delayed(const Duration(seconds: 1));
-        if (mounted) {
-          Navigator.of(context).pop(true);
-        }
+        if (mounted) Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
@@ -911,75 +925,71 @@ class _WhisperDownloadDialogState extends State<_WhisperDownloadDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return PopScope(
       canPop: _isComplete || _error != null,
       child: AlertDialog(
-        title: Row(
-          children: [
-            if (_isComplete)
-              const Icon(Icons.check_circle, color: Colors.green)
-            else if (_error != null)
-              const Icon(Icons.error, color: Colors.red)
-            else
-              const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                _isComplete ? 'Fertig!' : _error != null ? 'Fehler' : 'Download läuft',
-                style: const TextStyle(fontSize: 18),
-              ),
-            ),
-          ],
+        icon: Icon(
+          _isComplete 
+            ? Icons.check_circle_rounded 
+            : _error != null 
+              ? Icons.error_rounded 
+              : Icons.downloading_rounded,
+          size: 48,
+          color: _isComplete 
+            ? AppColors.success 
+            : _error != null 
+              ? AppColors.error 
+              : theme.colorScheme.primary,
+        ),
+        title: Text(
+          _isComplete 
+            ? 'Fertig!' 
+            : _error != null 
+              ? 'Fehler' 
+              : 'Download läuft',
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(_status),
-            const SizedBox(height: 16),
+            Text(_status, textAlign: TextAlign.center),
+            const SizedBox(height: AppSpacing.md),
             if (_error == null) ...[
-              LinearProgressIndicator(
-                value: _progress,
-                minHeight: 8,
-                backgroundColor: Colors.grey[300],
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  _isComplete ? Colors.green : Theme.of(context).primaryColor,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(AppRadius.full),
+                child: LinearProgressIndicator(
+                  value: _progress,
+                  minHeight: 8,
+                  backgroundColor: theme.colorScheme.outline.withValues(alpha: 0.2),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppSpacing.sm),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
                     '${(_progress * 100).toStringAsFixed(1)}%',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                    style: theme.textTheme.labelLarge,
                   ),
                   if (_total > 0)
                     Text(
                       '${_formatBytes(_downloaded)} / ${_formatBytes(_total)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[600],
-                      ),
+                      style: theme.textTheme.bodySmall,
                     ),
                 ],
               ),
             ] else ...[
               Text(
                 _error!,
-                style: const TextStyle(color: Colors.red),
+                style: TextStyle(color: AppColors.error),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.of(context).pop(false),
-                  child: const Text('Schließen'),
-                ),
+              const SizedBox(height: AppSpacing.md),
+              AppButton(
+                label: 'Schließen',
+                style: AppButtonStyle.secondary,
+                onPressed: () => Navigator.of(context).pop(false),
               ),
             ],
           ],

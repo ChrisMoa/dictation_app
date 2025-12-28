@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import 'package:dictation_app/core/theme/app_theme.dart';
+import 'package:dictation_app/core/theme/components/components.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_bloc.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_event.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_state.dart';
@@ -9,7 +11,6 @@ import 'package:dictation_app/features/overlay/presentation/bloc/overlay_event.d
 import 'package:dictation_app/features/overlay/presentation/bloc/overlay_state.dart' as overlay_state;
 import 'package:dictation_app/features/overlay/domain/entities/overlay_config.dart';
 import 'package:dictation_app/features/settings/presentation/pages/settings_page.dart';
-import 'package:dictation_app/core/services/ai_grammar_service.dart';
 import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
 
@@ -20,19 +21,33 @@ class DictationHomePage extends StatefulWidget {
   State<DictationHomePage> createState() => _DictationHomePageState();
 }
 
-class _DictationHomePageState extends State<DictationHomePage> {
+class _DictationHomePageState extends State<DictationHomePage>
+    with TickerProviderStateMixin {
   final TextEditingController _textController = TextEditingController();
   bool _isListening = false;
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
 
   @override
   void initState() {
     super.initState();
-    _setupFallbackListener();
+    _setupAnimations();
     _setupWhisperContext();
   }
 
+  void _setupAnimations() {
+    _fadeController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _fadeController,
+      curve: Curves.easeInOut,
+    );
+    _fadeController.forward();
+  }
+
   void _setupWhisperContext() {
-    // Set context for WhisperService to show download dialog
     try {
       final whisperService = getIt<WhisperService>();
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -45,29 +60,29 @@ class _DictationHomePageState extends State<DictationHomePage> {
     }
   }
 
-  void _setupFallbackListener() {
-    // No longer needed with simplified text processing
-    // Text processing now only uses Ollama or is disabled
-  }
-
   @override
   void dispose() {
     _textController.dispose();
+    _fadeController.dispose();
     super.dispose();
   }
 
   void _startDictation() {
     context.read<DictationBloc>().add(const StartDictationEvent());
-    setState(() {
-      _isListening = true;
-    });
+    setState(() => _isListening = true);
   }
 
   void _stopDictation() {
     context.read<DictationBloc>().add(StopDictationEvent());
-    setState(() {
-      _isListening = false;
-    });
+    setState(() => _isListening = false);
+  }
+
+  void _toggleDictation() {
+    if (_isListening) {
+      _stopDictation();
+    } else {
+      _startDictation();
+    }
   }
 
   void _clearText() {
@@ -88,227 +103,377 @@ class _DictationHomePageState extends State<DictationHomePage> {
       height: 120,
       flag: OverlayFlag.defaultFlag,
     );
-    debugPrint('HomePage: Requesting overlay with config: width=${config.width}, height=${config.height}');
-    
-    // Show loading indicator
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Row(
-          children: [
-            SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-            SizedBox(width: 16),
-            Text('Showing overlay...'),
-          ],
-        ),
-        duration: Duration(seconds: 3),
-      ),
-    );
-    
     context.read<OverlayBloc>().add(const ShowOverlayEvent(config));
   }
 
   void _hideOverlay() {
-    debugPrint('HomePage: Hiding overlay');
     context.read<OverlayBloc>().add(HideOverlayEvent());
   }
 
   void _openSettings() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => const SettingsPage(),
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) => 
+          const SettingsPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(1.0, 0.0),
+              end: Offset.zero,
+            ).animate(CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCubic,
+            )),
+            child: child,
+          );
+        },
       ),
-    ).then((_) {
-      // Refresh fallback listener in case settings changed
-      _setupFallbackListener();
-    });
+    );
+  }
+
+  void _showSnackBar(String message, {bool isError = false, bool isSuccess = false}) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(
+              isError ? Icons.error_outline : 
+              isSuccess ? Icons.check_circle_outline : 
+              Icons.info_outline,
+              color: Colors.white,
+              size: 20,
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: isError ? AppColors.error : 
+                        isSuccess ? AppColors.success : 
+                        null,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(AppSpacing.md),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Dictation App'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-            tooltip: 'Grammar Correction Settings',
-          ),
-        ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(4.0),
-          child: BlocBuilder<DictationBloc, DictationState>(
-            builder: (context, state) {
-              if (state is DictationLoading || state is SpellCheckLoading) {
-                return const LinearProgressIndicator(minHeight: 4.0);
-              }
-              return const SizedBox(height: 4.0);
-            },
-          ),
-        ),
-      ),
-      body: MultiBlocListener(
-        listeners: [
-          BlocListener<DictationBloc, DictationState>(
-            listener: (context, state) {
-              if (state is DictationListening) {
-                _textController.text = state.currentText + state.partialText;
-                setState(() {
-                  _isListening = true;
-                });
-              } else if (state is DictationStopped) {
-                _textController.text = state.finalText;
-                setState(() {
-                  _isListening = false;
-                });
-              } else if (state is SpellCheckLoading) {
-                // Show loading indicator for spell check
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Row(
+      body: SafeArea(
+        child: MultiBlocListener(
+          listeners: [
+            BlocListener<DictationBloc, DictationState>(
+              listener: (context, state) {
+                if (state is DictationListening) {
+                  _textController.text = state.currentText + state.partialText;
+                  if (!_isListening) setState(() => _isListening = true);
+                } else if (state is DictationStopped) {
+                  _textController.text = state.finalText;
+                  if (_isListening) setState(() => _isListening = false);
+                } else if (state is SpellCheckLoading) {
+                  _showSnackBar('Rechtschreibung wird geprüft...');
+                } else if (state is SpellCheckResultState) {
+                  _textController.text = state.correctedText;
+                  final hasCorrections = state.originalText != state.correctedText;
+                  _showSnackBar(
+                    hasCorrections 
+                      ? 'Text korrigiert (${(state.confidence * 100).toStringAsFixed(0)}% Konfidenz)'
+                      : 'Keine Korrekturen nötig',
+                    isSuccess: true,
+                  );
+                  if (_isListening) setState(() => _isListening = false);
+                } else if (state is DictationError) {
+                  _showSnackBar('Fehler: ${state.message}', isError: true);
+                  if (_isListening) setState(() => _isListening = false);
+                } else if (state is DictationTextSavedToClipboard) {
+                  _showSnackBar('In Zwischenablage kopiert!', isSuccess: true);
+                }
+              },
+            ),
+            BlocListener<OverlayBloc, overlay_state.OverlayState>(
+              listener: (context, state) {
+                if (state is overlay_state.OverlayVisible) {
+                  _showSnackBar('Overlay aktiv - App kann minimiert werden', isSuccess: true);
+                } else if (state is overlay_state.OverlayHidden) {
+                  _showSnackBar('Overlay geschlossen');
+                } else if (state is overlay_state.OverlayError) {
+                  _showSnackBar('Overlay Fehler: ${state.message}', isError: true);
+                }
+              },
+            ),
+          ],
+          child: FadeTransition(
+            opacity: _fadeAnimation,
+            child: Column(
+              children: [
+                // Header
+                _buildHeader(theme, isDark),
+                
+                // Main content
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+                    child: Column(
                       children: [
-                        SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                        const SizedBox(height: AppSpacing.md),
+                        
+                        // Status indicator
+                        _buildStatusIndicator(),
+                        
+                        const SizedBox(height: AppSpacing.md),
+                        
+                        // Text area
+                        Expanded(
+                          child: BlocBuilder<DictationBloc, DictationState>(
+                            builder: (context, state) {
+                              final isSpellChecking = state is SpellCheckLoading;
+                              return AppTextArea(
+                                controller: _textController,
+                                hintText: 'Tippe auf den Mikrofon-Button um zu diktieren...',
+                                isActive: _isListening,
+                                suffix: TextAreaActions(
+                                  characterCount: _textController.text.length,
+                                  onCopy: _textController.text.isNotEmpty 
+                                    ? _saveToClipboard 
+                                    : null,
+                                  onClear: _textController.text.isNotEmpty 
+                                    ? _clearText 
+                                    : null,
+                                  isSpellChecking: isSpellChecking,
+                                ),
+                              );
+                            },
+                          ),
                         ),
-                        SizedBox(width: 16),
-                        Text('Checking spelling...'),
+                        
+                        const SizedBox(height: AppSpacing.lg),
+                        
+                        // Recording button
+                        _buildRecordingSection(),
+                        
+                        const SizedBox(height: AppSpacing.md),
+                        
+                        // Quick actions
+                        _buildQuickActions(),
+                        
+                        const SizedBox(height: AppSpacing.lg),
                       ],
-                    ),
-                    duration: Duration(seconds: 2),
-                  ),
-                );
-              } else if (state is SpellCheckResultState) {
-                _textController.text = state.correctedText;
-                final hasCorrections = state.originalText != state.correctedText;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(hasCorrections 
-                      ? 'Spell check complete! Text corrected with ${(state.confidence * 100).toStringAsFixed(1)}% confidence'
-                      : 'Spell check complete! No corrections needed'),
-                    backgroundColor: hasCorrections ? Colors.orange : Colors.green,
-                  ),
-                );
-                setState(() {
-                  _isListening = false;
-                });
-              } else if (state is DictationError) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Error: ${state.message}')),
-                );
-                setState(() {
-                  _isListening = false;
-                });
-              } else if (state is DictationTextSavedToClipboard) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Text saved to clipboard!')),
-                );
-              }
-            },
-          ),
-          BlocListener<OverlayBloc, overlay_state.OverlayState>(
-            listener: (context, state) {
-              if (state is overlay_state.OverlayVisible) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Overlay shown - You can now minimize the app!'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              } else if (state is overlay_state.OverlayHidden) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Overlay hidden')),
-                );
-              } else if (state is overlay_state.OverlayError) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Overlay Error: ${state.message}'),
-                    backgroundColor: Colors.red,
-                  ),
-                );
-              }
-            },
-          ),
-        ],
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: TextField(
-                    controller: _textController,
-                    maxLines: null,
-                    expands: true,
-                    decoration: const InputDecoration(
-                      hintText: 'Dictated text will appear here...',
-                      border: InputBorder.none,
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              BlocBuilder<DictationBloc, DictationState>(
-                builder: (context, state) {
-                  final isLoading = state is DictationLoading || state is SpellCheckLoading;
-                  return Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      ElevatedButton.icon(
-                        onPressed: isLoading ? null : (_isListening ? _stopDictation : _startDictation),
-                        icon: Icon(_isListening ? Icons.stop : Icons.mic),
-                        label: Text(_isListening ? 'Stop' : 'Start'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _isListening ? Colors.red : Colors.green,
-                          foregroundColor: Colors.white,
-                        ),
-                      ),
-                      ElevatedButton.icon(
-                        onPressed: isLoading ? null : _clearText,
-                        icon: const Icon(Icons.clear),
-                        label: const Text('Clear'),
-                      ),
-                    ],
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: _saveToClipboard,
-                    icon: const Icon(Icons.copy),
-                    label: const Text('Copy'),
-                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader(ThemeData theme, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: theme.scaffoldBackgroundColor,
+        border: Border(
+          bottom: BorderSide(
+            color: isDark ? AppColors.borderDark : AppColors.borderLight,
+            width: 1,
+          ),
+        ),
+      ),
+      child: Row(
+        children: [
+          // App icon and title
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.sm),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  theme.colorScheme.primary,
+                  theme.colorScheme.primary.withValues(alpha: 0.8),
                 ],
               ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: _showOverlay,
-                    icon: const Icon(Icons.open_in_new),
-                    label: const Text('Show Overlay'),
-                  ),
-                  ElevatedButton.icon(
-                    onPressed: _hideOverlay,
-                    icon: const Icon(Icons.close),
-                    label: const Text('Hide Overlay'),
-                  ),
-                ],
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+            child: const Icon(
+              Icons.mic_rounded,
+              color: Colors.white,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Dictation',
+                  style: theme.textTheme.titleLarge,
+                ),
+                Text(
+                  'Sprache zu Text',
+                  style: theme.textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          // Settings button
+          AppIconButton(
+            icon: Icons.settings_outlined,
+            onPressed: _openSettings,
+            tooltip: 'Einstellungen',
+            size: 40,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStatusIndicator() {
+    return BlocBuilder<DictationBloc, DictationState>(
+      builder: (context, state) {
+        AppStatusType statusType;
+        String statusText;
+
+        if (state is DictationListening) {
+          statusType = AppStatusType.success;
+          statusText = 'Aufnahme läuft...';
+        } else if (state is DictationLoading || state is SpellCheckLoading) {
+          statusType = AppStatusType.warning;
+          statusText = state is SpellCheckLoading 
+            ? 'Rechtschreibprüfung...' 
+            : 'Verarbeitung...';
+        } else if (state is DictationError) {
+          statusType = AppStatusType.error;
+          statusText = 'Fehler aufgetreten';
+        } else {
+          statusType = AppStatusType.neutral;
+          statusText = 'Bereit';
+        }
+
+        return AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: AppStatusBadge(
+            key: ValueKey(statusText),
+            type: statusType,
+            label: statusText,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildRecordingSection() {
+    return BlocBuilder<DictationBloc, DictationState>(
+      builder: (context, state) {
+        final isLoading = state is DictationLoading;
+        final isSpellChecking = state is SpellCheckLoading;
+        
+        return Column(
+          children: [
+            RecordingButton(
+              isRecording: _isListening,
+              isProcessing: isLoading || isSpellChecking,
+              onPressed: _toggleDictation,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: _isListening ? 1.0 : 0.6,
+              child: Text(
+                _isListening ? 'Tippen zum Stoppen' : 'Tippen zum Starten',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildQuickActions() {
+    return BlocBuilder<OverlayBloc, overlay_state.OverlayState>(
+      builder: (context, state) {
+        final isOverlayVisible = state is overlay_state.OverlayVisible;
+        
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            _QuickActionButton(
+              icon: isOverlayVisible 
+                ? Icons.picture_in_picture_alt 
+                : Icons.picture_in_picture_outlined,
+              label: isOverlayVisible ? 'Overlay aus' : 'Overlay an',
+              onTap: isOverlayVisible ? _hideOverlay : _showOverlay,
+              isActive: isOverlayVisible,
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _QuickActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final bool isActive;
+
+  const _QuickActionButton({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.isActive = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Material(
+      color: isActive 
+        ? theme.colorScheme.primary.withValues(alpha: 0.1)
+        : (isDark ? AppColors.surfaceContainerHighDark : AppColors.surfaceContainerHighLight),
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.lg,
+            vertical: AppSpacing.md,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                icon,
+                size: 20,
+                color: isActive 
+                  ? theme.colorScheme.primary 
+                  : theme.colorScheme.onSurface,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w500,
+                  color: isActive 
+                    ? theme.colorScheme.primary 
+                    : theme.colorScheme.onSurface,
+                ),
               ),
             ],
           ),
@@ -317,4 +482,3 @@ class _DictationHomePageState extends State<DictationHomePage> {
     );
   }
 }
-

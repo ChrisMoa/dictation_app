@@ -1,9 +1,11 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:dictation_app/core/dependency_injection.dart';
 import 'package:dictation_app/core/services/settings_service.dart';
+import 'package:dictation_app/core/theme/app_theme.dart';
 import 'package:dictation_app/features/dictation/presentation/pages/dictation_home_page.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_bloc.dart';
 import 'package:dictation_app/features/dictation/presentation/bloc/dictation_event.dart';
@@ -16,7 +18,7 @@ void overlayMain() {
   runApp(
     MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
+      theme: AppTheme.darkTheme,
       home: const OverlayWidget(),
     ),
   );
@@ -110,6 +112,16 @@ class _DictationAppState extends State<DictationApp> {
 
   @override
   Widget build(BuildContext context) {
+    // Set system UI overlay style
+    SystemChrome.setSystemUIOverlayStyle(
+      const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        systemNavigationBarColor: AppColors.surfaceLight,
+        systemNavigationBarIconBrightness: Brightness.dark,
+      ),
+    );
+
     return MultiBlocProvider(
       providers: [
         BlocProvider<DictationBloc>(
@@ -120,12 +132,11 @@ class _DictationAppState extends State<DictationApp> {
         ),
       ],
       child: MaterialApp(
-        title: 'Dictation App',
+        title: 'Dictation',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-          useMaterial3: true,
-        ),
+        theme: AppTheme.lightTheme,
+        darkTheme: AppTheme.darkTheme,
+        themeMode: ThemeMode.system,
         home: const DictationHomePage(),
       ),
     );

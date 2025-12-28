@@ -54,9 +54,9 @@ app.*.map.json
 .vscode
 
 # outputfolder
-linux/**
-windows/**
-macos/**
+# linux/**
+# windows/**
+# macos/**
 
 */flutter
 windows/runner
