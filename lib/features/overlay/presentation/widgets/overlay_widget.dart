@@ -93,6 +93,23 @@ class _OverlayWidgetState extends State<OverlayWidget>
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // App logo
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.1),
+                  ),
+                  padding: const EdgeInsets.all(6),
+                  child: Image.asset(
+                    'assets/images/app_logo.png',
+                    fit: BoxFit.contain,
+                  ),
+                ),
+
+                const SizedBox(width: 12),
+
                 // Recording indicator
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 200),

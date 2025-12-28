@@ -50,9 +50,9 @@ flutter_icons:
   linux: true
   windows:
     generate: true
-    image_path: "assets/app_logo.png"
+    image_path: "assets/images/app_logo.png"
     icon_size: 48 # min:48, max:256, default: 48
-  image_path: "assets/app_logo.png"
+  image_path: "assets/images/app_logo.png"
 
 flutter:
   uses-material-design: true

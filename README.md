@@ -12,9 +12,9 @@ A modern, offline-capable dictation application built with Flutter. It supports 
 
 ## Screenshots
 
-| Home | Recording | Settings | Overlay |
-|------|-----------|----------|---------|
-| ![Home](assets/screenshots/home.png) | ![Recording](assets/screenshots/recording.png) | ![Settings](assets/screenshots/settings.png) | ![Overlay](assets/screenshots/overlay.png) |
+| Home | Settings |
+|------|----------|
+| ![Home](assets/screenshots/home.png) | ![Settings](assets/screenshots/settings.png) |
 
 ## Getting Started
 
