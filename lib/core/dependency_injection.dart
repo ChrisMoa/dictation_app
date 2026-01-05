@@ -9,7 +9,7 @@ import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/features/dictation/data/repositories/speech_repository_impl.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
 import 'package:dictation_app/features/dictation/data/datasources/whisper_datasource.dart';
-import 'package:dictation_app/features/dictation/data/datasources/linux_stt_datasource.dart';
+import 'package:dictation_app/features/dictation/data/datasources/whisper4dart_datasource.dart';
 import 'package:dictation_app/features/dictation/data/datasources/whisper_cli_linux_datasource.dart';
 import 'package:dictation_app/features/dictation/domain/repositories/speech_repository.dart';
 import 'package:dictation_app/features/dictation/domain/usecases/start_listening.dart';
@@ -76,7 +76,7 @@ Future<void> setupDependencyInjection() async {
     );
     debugPrint('DI: SpeechDatasourceImpl registered');
     
-    // Register the active STT datasource based on settings
+    // Register the active STT datasource based on platform and settings
     // IMPORTANT: This is evaluated ONCE at startup based on initial settings
     // App restart required after changing STT engine in settings
     getIt.registerLazySingleton<SpeechDatasource>(
@@ -85,12 +85,13 @@ Future<void> setupDependencyInjection() async {
         final sttEngine = settingsService.sttEngine;
         debugPrint('DI: ⚙️ Selecting STT engine: ${sttEngine.name}');
 
-        // Use Linux-specific implementation on Linux (neither whisper nor speech_to_text support Linux)
+        // On Linux, use WhisperCLI (whisper4dart prebuilt has GPU issues, whisper_flutter_new doesn't support Linux)
         if (Platform.isLinux) {
-          debugPrint('DI: ⚙️ Linux detected - using Whisper CLI datasource');
+          debugPrint('DI: ⚙️ Linux detected - using WhisperCLI datasource');
           return WhisperCliLinuxDatasource();
         }
 
+        // On other platforms, respect user's choice from settings
         if (sttEngine == SttEngine.whisper) {
           debugPrint('DI: ✅ Using Whisper (Offline) as primary STT');
           return getIt<WhisperDatasourceImpl>();

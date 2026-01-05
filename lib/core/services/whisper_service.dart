@@ -1,9 +1,8 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:whisper_flutter_new/whisper_flutter_new.dart';
+import 'package:whisper4dart/whisper4dart.dart' as whisper;
 import 'package:dictation_app/core/services/settings_service.dart';
 import 'package:dictation_app/core/services/whisper_download_service.dart';
 
@@ -13,21 +12,33 @@ class WhisperService {
   factory WhisperService() => _instance;
   WhisperService._internal();
 
-  Whisper? _whisper;
+  whisper.Whisper? _whisper;
   bool _isInitialized = false;
   String? _currentModelPath;
   String? _localModelDir;
   BuildContext? _downloadContext;
 
-  /// Convert WhisperModelSize to WhisperModel
-  WhisperModel _getWhisperModel(WhisperModelSize size) {
+  /// Convert WhisperModelSize to model filename
+  String _getModelFilename(WhisperModelSize size) {
     switch (size) {
       case WhisperModelSize.tiny:
-        return WhisperModel.tiny;
+        return 'ggml-tiny.bin';
       case WhisperModelSize.base:
-        return WhisperModel.base;
+        return 'ggml-base.bin';
       case WhisperModelSize.small:
-        return WhisperModel.small;
+        return 'ggml-small.bin';
+    }
+  }
+
+  /// Get model name for download service
+  String _getModelName(WhisperModelSize size) {
+    switch (size) {
+      case WhisperModelSize.tiny:
+        return 'tiny';
+      case WhisperModelSize.base:
+        return 'base';
+      case WhisperModelSize.small:
+        return 'small';
     }
   }
 
@@ -63,22 +74,22 @@ class WhisperService {
   }
 
   /// Initialize Whisper with model from settings
-  /// Note: medium and larger models crash in whisper_flutter_new v1.0.1
   Future<void> initialize({WhisperModelSize? modelSize, BuildContext? context}) async {
     if (context != null) {
       _downloadContext = context;
     }
     
-    // Get model from settings if not provided
-    final model = modelSize != null 
-        ? _getWhisperModel(modelSize)
-        : WhisperModel.base;
-    if (_isInitialized && _currentModelPath == model.toString()) {
-      debugPrint('WhisperService: Already initialized with model: $model');
+    // Get model filename
+    final size = modelSize ?? WhisperModelSize.base;
+    final modelFilename = _getModelFilename(size);
+    final modelName = _getModelName(size);
+    
+    if (_isInitialized && _currentModelPath == modelFilename) {
+      debugPrint('WhisperService: Already initialized with model: $modelFilename');
       return;
     }
 
-    debugPrint('WhisperService: Initializing with model: $model');
+    debugPrint('WhisperService: Initializing with model: $modelFilename');
 
     try {
       // Get app's document directory for storing the model
@@ -95,7 +106,7 @@ class WhisperService {
       }
 
       // Check if model needs to be downloaded BEFORE initializing Whisper
-      final modelPath = model.getPath(_localModelDir!);
+      final modelPath = '$_localModelDir/$modelFilename';
       final modelFile = File(modelPath);
       
       if (!await modelFile.exists()) {
@@ -105,7 +116,7 @@ class WhisperService {
         if (_downloadContext != null && _downloadContext!.mounted) {
           debugPrint('WhisperService: Showing download dialog');
           try {
-            await _downloadModelWithDialog(model.modelName);
+            await _downloadModelWithDialog(modelName);
             debugPrint('WhisperService: ✅ Model download completed');
           } catch (e) {
             debugPrint('WhisperService: ❌ Model download failed: $e');
@@ -113,32 +124,23 @@ class WhisperService {
           }
         } else {
           debugPrint('WhisperService: ⚠️ No context available for dialog');
-          debugPrint('WhisperService: Model will be downloaded by whisper_flutter_new (no progress)');
+          debugPrint('WhisperService: Model will need to be downloaded manually');
+          throw Exception('Model not found and no context available for download');
         }
       } else {
         final fileSize = await modelFile.length();
         debugPrint('WhisperService: ✅ Model already exists (${(fileSize / 1024 / 1024).toStringAsFixed(1)} MB)');
       }
 
-      // Initialize Whisper (model should exist now)
-      debugPrint('WhisperService: Initializing Whisper with model: $model');
-      _whisper = Whisper(
-        model: model,
-        modelDir: _localModelDir,
-      );
+      // Initialize Whisper with default context parameters
+      debugPrint('WhisperService: Initializing Whisper with model: $modelFilename');
+      final cparams = whisper.createContextDefaultParams();
+      _whisper = whisper.Whisper(modelPath, cparams, outputMode: 'plaintext');
 
-      _currentModelPath = model.toString();
+      _currentModelPath = modelFilename;
       _isInitialized = true;
 
-      debugPrint('WhisperService: Initialization successful with model: $model');
-      
-      // Try to get Whisper version to verify library is working
-      try {
-        final version = await _whisper!.getVersion();
-        debugPrint('WhisperService: ✅ Whisper library version: $version');
-      } catch (e) {
-        debugPrint('WhisperService: ⚠️ Could not get Whisper version: $e');
-      }
+      debugPrint('WhisperService: Initialization successful with model: $modelFilename');
     } catch (e) {
       debugPrint('WhisperService: Initialization failed: $e');
       debugPrint('WhisperService: Stack trace: ${StackTrace.current}');
@@ -160,7 +162,7 @@ class WhisperService {
     }
 
     debugPrint('WhisperService: Starting transcription for audio: $audioPath');
-    debugPrint('WhisperService: Parameters - translate: $isTranslate, noTimestamps: $isNoTimestamps, splitOnWord: $splitOnWord, language: $language');
+    debugPrint('WhisperService: Parameters - translate: $isTranslate, language: $language');
 
     final stopwatch = Stopwatch()..start();
 
@@ -171,23 +173,26 @@ class WhisperService {
       debugPrint('WhisperService: Audio file size: ${audioSize} bytes (${(audioSize / 1024).toStringAsFixed(2)} KB)');
       
       debugPrint('WhisperService: Starting transcription (model: $_currentModelPath)...');
-      final response = await _whisper!.transcribe(
-        transcribeRequest: TranscribeRequest(
-          audio: audioPath,
-          isTranslate: isTranslate,
-          isNoTimestamps: isNoTimestamps,
-          splitOnWord: splitOnWord,
-          language: language,
-        ),
+      
+      // Get temporary directory for log file
+      final tempDir = await getTemporaryDirectory();
+      final logPath = '${tempDir.path}/whisper_log.txt';
+      
+      // Call whisper4dart infer method
+      final transcribedText = await _whisper!.infer(
+        audioPath,
+        logPath: logPath,
+        numProcessors: 1,
+        translate: isTranslate,
+        initialPrompt: '',
+        startTime: 0,
+        endTime: -1,
+        useOriginalTime: true,
       );
 
       stopwatch.stop();
 
-      final transcribedText = response.text;
       final processingSpeed = audioSize / stopwatch.elapsedMilliseconds; // bytes per ms
-
-      // Keep [] annotations for AI filtering later
-      // Just log and return as-is
 
       debugPrint('WhisperService: ✅ Transcription completed in ${stopwatch.elapsedMilliseconds}ms');
       debugPrint('WhisperService: Processing speed: ${(processingSpeed * 1000 / 1024).toStringAsFixed(2)} KB/s');
@@ -195,7 +200,7 @@ class WhisperService {
       debugPrint('WhisperService: Result length: ${transcribedText.length} characters');
 
       return WhisperTranscriptionResult(
-        text: transcribedText,
+        text: transcribedText.trim(),
         elapsedTimeMs: stopwatch.elapsedMilliseconds,
         success: true,
       );

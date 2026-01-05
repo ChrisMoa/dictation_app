@@ -6,6 +6,8 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
 import 'package:dictation_app/features/dictation/data/models/speech_result_model.dart';
+import 'package:dictation_app/core/services/settings_service.dart';
+import 'package:dictation_app/core/dependency_injection.dart';
 
 /// Linux STT implementation using Whisper.cpp CLI
 ///
@@ -29,8 +31,28 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
 
   // Path to whisper.cpp executable
   static const String _whisperPath = '/tmp/whisper.cpp/build/bin/whisper-cli';
-  // Path to model
-  static const String _modelPath = '/home/chris/Dokumente/whisper_models/ggml-base.bin';
+
+  // Get model path based on settings
+  static String _getModelPath(WhisperModelSize modelSize) {
+    final homeDir = Platform.environment['HOME'] ?? '/home/${Platform.environment['USER']}';
+    final modelDir = '$homeDir/Dokumente/whisper_models';
+
+    // Map model size to filename
+    String modelFile;
+    switch (modelSize) {
+      case WhisperModelSize.tiny:
+        modelFile = 'ggml-tiny.bin';
+        break;
+      case WhisperModelSize.base:
+        modelFile = 'ggml-base.bin';
+        break;
+      case WhisperModelSize.small:
+        modelFile = 'ggml-small.bin';
+        break;
+    }
+
+    return '$modelDir/$modelFile';
+  }
 
   @override
   Future<bool> initialize() async {
@@ -38,7 +60,6 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
 
     // Check if whisper.cpp is installed
     final whisperExists = await File(_whisperPath).exists();
-    final modelExists = await File(_modelPath).exists();
 
     if (!whisperExists) {
       debugPrint('WhisperCLI: ⚠️ whisper.cpp not found at $_whisperPath');
@@ -46,10 +67,20 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
       return false;
     }
 
+    // Get model size from settings
+    final settingsService = getIt<SettingsService>();
+    final modelSize = settingsService.whisperModelSize;
+    final modelPath = _getModelPath(modelSize);
+
+    debugPrint('WhisperCLI: Using model size from settings: ${modelSize.name}');
+    debugPrint('WhisperCLI: Model path: $modelPath');
+
+    final modelExists = await File(modelPath).exists();
+
     if (!modelExists) {
-      debugPrint('WhisperCLI: ⚠️ Model not found at $_modelPath');
-      debugPrint('WhisperCLI: Using existing model from whisper_flutter_new');
-      // Model exists from previous download, continue
+      debugPrint('WhisperCLI: ⚠️ Model not found at $modelPath');
+      debugPrint('WhisperCLI: Please run the installation script to download the model');
+      return false;
     }
 
     debugPrint('WhisperCLI: Initialization successful');
@@ -164,11 +195,16 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
     try {
       debugPrint('WhisperCLI: Transcribing: $audioPath');
 
+      // Get current model path from settings
+      final settingsService = getIt<SettingsService>();
+      final modelSize = settingsService.whisperModelSize;
+      final modelPath = _getModelPath(modelSize);
+
       // Run whisper.cpp CLI
       final result = await Process.run(
         _whisperPath,
         [
-          '-m', _modelPath,
+          '-m', modelPath,
           '-f', audioPath,
           '-l', 'de', // German language
           '--no-timestamps',

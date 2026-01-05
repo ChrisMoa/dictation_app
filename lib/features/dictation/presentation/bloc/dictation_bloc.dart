@@ -59,8 +59,8 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
           },
           onError: (error) {
             debugPrint('DictationBloc: Speech recognition error: $error');
+            // Only use add() in stream listeners, never emit() directly
             add(StopDictationEvent());
-            emit(DictationError(message: 'Speech recognition error: $error'));
           },
         );
         

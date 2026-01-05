@@ -1,18 +1,14 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:dictation_app/features/dictation/data/models/speech_result_model.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
 
-/// Linux-specific STT implementation
+/// Linux-specific STT implementation (Legacy/Fallback)
 ///
-/// Since neither speech_to_text nor whisper_flutter_new support Linux,
-/// this implementation provides a workaround using mock data for now.
+/// NOTE: This is now a fallback implementation. Linux is now supported via whisper4dart.
+/// The app will use WhisperDatasourceImpl for Linux by default (see dependency_injection.dart).
 ///
-/// Future implementation could use:
-/// - Vosk for offline STT
-/// - Web Speech API via webview
-/// - Direct integration with cloud STT services
+/// This mock implementation remains for compatibility but should not be used in production.
 class LinuxSttDatasource implements SpeechDatasource {
   StreamController<SpeechResultModel>? _streamController;
   bool _isListening = false;

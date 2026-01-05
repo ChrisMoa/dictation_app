@@ -21,7 +21,7 @@ dependencies:
   tflite_flutter: ^0.11.0
   flutter_local_notifications: ^17.2.2
   http: ^1.1.0
-  whisper_flutter_new: ^1.0.1
+  whisper4dart: ^0.1.4
   record: ^6.1.0
 
   # Text Input
