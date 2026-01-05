@@ -27,24 +27,33 @@ class WhisperDatasourceImpl implements SpeechDatasource {
   WhisperDatasourceImpl({required this.whisperService});
 
   /// Validates if transcribed text is actual speech or just noise/gibberish
-  bool _isValidSpeech(String text) {
+  /// Balanced between being lenient and filtering obvious noise
+  bool _isValidSpeech(String text, {bool isFinalChunk = false}) {
     // Remove extra whitespace and [] annotations for validation
     final cleanText = text.replaceAll(RegExp(r'\[.*?\]'), '').trim();
     
-    // Empty or very short text is likely noise
-    if (cleanText.length < 5) {
-      return false; // Increased from 3 to 5
+    // Reject pure punctuation (e.g. ".", "!", "?")
+    final textWithoutPunctuation = cleanText.replaceAll(RegExp(r'[.,!?;:\-—…\s]'), '');
+    if (textWithoutPunctuation.isEmpty) {
+      debugPrint('WhisperDatasource: Filtered pure punctuation: "$text"');
+      return false;
+    }
+    
+    // Minimum length: 2 chars for final chunk, 3 for regular chunks
+    final minLength = isFinalChunk ? 2 : 3;
+    if (cleanText.length < minLength) {
+      return false;
     }
     
     // Check for repetitive characters (e.g. "aaaaa", "hhhh")
-    if (RegExp(r'(.)\1{3,}').hasMatch(cleanText)) {
-      return false; // Reduced from 4 to 3 - more strict
+    if (RegExp(r'(.)\1{5,}').hasMatch(cleanText)) {
+      return false;
     }
     
     // Check for common Whisper hallucinations/noise patterns
     final lowerText = cleanText.toLowerCase();
     
-    // Extended noise patterns that Whisper produces
+    // Filter obvious hallucinations
     final noisePatterns = [
       'untertitel',
       'subtitle',
@@ -54,59 +63,49 @@ class WhisperDatasourceImpl implements SpeechDatasource {
       'abonnieren',
       '♪',
       '♫',
-      'www.',
-      '.com',
-      'http',
       'youtube',
-      'video',
-      'channel',
-      'kanal',
-      'musik',
-      'music',
-      'sound',
-      'audio',
-      'hintergrundmusik',
-      'background music',
-      'applaus',
-      'applause',
-      'lachen',
-      'laughter',
-      'geräusch',
-      'noise',
-      'rauschen',
-      'stille',
-      'silence',
-      'pause',
+      '[musik]',
+      '[music]',
+      '[applaus]',
+      '[applause]',
     ];
     
+    // Reject if the ENTIRE text is a noise pattern
     for (final pattern in noisePatterns) {
-      if (lowerText.contains(pattern)) {
+      if (lowerText == pattern || lowerText == '[$pattern]') {
+        debugPrint('WhisperDatasource: Filtered hallucination pattern: "$pattern"');
         return false;
       }
     }
     
-    // Check if text is mostly punctuation or special characters
+    // Check if text has reasonable letter content (at least 50%)
     final alphanumericCount = cleanText.replaceAll(RegExp(r'[^a-zA-ZäöüÄÖÜß0-9]'), '').length;
-    if (alphanumericCount < cleanText.length * 0.6) {
-      return false; // Increased from 50% to 60% - more strict
+    if (alphanumericCount < cleanText.length * 0.5) {
+      return false;
     }
     
-    // Check for minimum word count (at least 2 words with 2+ characters)
+    // Check for minimum word count
     final words = cleanText.split(RegExp(r'\s+'));
     final validWords = words.where((w) => w.length >= 2).toList();
-    if (validWords.length < 2) {
-      return false; // Increased from 1 to 2 - need at least 2 words
+    
+    if (validWords.isEmpty) {
+      return false;
     }
     
-    // Check for very repetitive words (e.g. "test test test")
-    if (validWords.length >= 3) {
+    // For final chunks, be very lenient - accept any single word of 3+ letters
+    if (isFinalChunk && validWords.length == 1 && validWords.first.length >= 3) {
+      return true;
+    }
+    
+    // Reject completely repetitive text (same word 4+ times)
+    if (!isFinalChunk && validWords.length >= 4) {
       final uniqueWords = validWords.toSet();
-      if (uniqueWords.length < validWords.length * 0.5) {
-        return false; // Too many repeated words
+      if (uniqueWords.length == 1) {
+        debugPrint('WhisperDatasource: Filtered completely repetitive text: "$text"');
+        return false;
       }
     }
     
-    // Passed all checks - likely valid speech
     return true;
   }
 
@@ -266,7 +265,8 @@ class WhisperDatasourceImpl implements SpeechDatasource {
       final fileSize = await file.length();
       debugPrint('WhisperDatasource: Snapshot file size: $fileSize bytes');
 
-      if (fileSize < 1000) {
+      // Reduced threshold from 1000 to 600 bytes to capture shorter utterances
+      if (fileSize < 600) {
         debugPrint('WhisperDatasource: Snapshot too small, likely silence');
         await file.delete();
         _isTranscribing = false;
@@ -398,8 +398,9 @@ class WhisperDatasourceImpl implements SpeechDatasource {
             final fileSize = await file.length();
             debugPrint('WhisperDatasource: Final chunk size: $fileSize bytes');
 
-            if (fileSize >= 1000) {
-              // Transcribe final chunk
+            // Reduced threshold from 1000 to 500 bytes for final chunk
+            if (fileSize >= 500) {
+              // Transcribe final chunk with aggressive preservation
               debugPrint('WhisperDatasource: Transcribing final chunk');
               final language = _currentLocaleId.split('_')[0];
               final result = await whisperService.transcribe(
@@ -411,9 +412,32 @@ class WhisperDatasourceImpl implements SpeechDatasource {
               );
 
               if (result.success && result.text.trim().isNotEmpty) {
-                _accumulatedText.add(result.text.trim());
-                debugPrint('WhisperDatasource: Final chunk transcribed: "${result.text.trim()}"');
+                final text = result.text.trim();
+                
+                // Aggressive final chunk preservation
+                if (_isValidSpeech(text, isFinalChunk: true)) {
+                  _accumulatedText.add(text);
+                  debugPrint('WhisperDatasource: ✅ Final chunk added: "$text"');
+                } else {
+                  // Recovery: extract ANY recognizable words
+                  final cleanText = text.replaceAll(RegExp(r'\[.*?\]'), '').trim();
+                  final words = cleanText.split(RegExp(r'\s+'));
+                  final realWords = words.where((w) => 
+                    w.isNotEmpty && RegExp(r'[a-zA-ZäöüÄÖÜß]').hasMatch(w)
+                  ).toList();
+                  
+                  if (realWords.isNotEmpty) {
+                    final recoveredText = realWords.join(' ');
+                    _accumulatedText.add(recoveredText);
+                    debugPrint('WhisperDatasource: 🔄 Recovered final words: "$recoveredText"');
+                  } else if (RegExp(r'[a-zA-ZäöüÄÖÜß]{2,}').hasMatch(cleanText)) {
+                    _accumulatedText.add(cleanText);
+                    debugPrint('WhisperDatasource: 🆘 Last resort - keeping final chunk: "$cleanText"');
+                  }
+                }
               }
+            } else {
+              debugPrint('WhisperDatasource: ⚠️ Final chunk too small ($fileSize bytes)');
             }
 
             await file.delete();
@@ -422,15 +446,19 @@ class WhisperDatasourceImpl implements SpeechDatasource {
         }
 
         // Emit final accumulated result
+        final finalText = _accumulatedText.join(' ');
+        debugPrint('WhisperDatasource: 📝 Accumulated ${_accumulatedText.length} text chunks');
+        debugPrint('WhisperDatasource: 📝 Final text length: ${finalText.length} characters');
+        
         if (_accumulatedText.isNotEmpty) {
-          final finalText = _accumulatedText.join(' ');
           _streamController?.add(SpeechResultModel(
             recognizedWords: finalText,
             hasConfidenceRating: false,
             confidence: 1.0,
             finalResult: true,
           ));
-          debugPrint('WhisperDatasource: Emitted final accumulated result: "$finalText"');
+          debugPrint('WhisperDatasource: ✅ Emitted final accumulated result: "$finalText"');
+          debugPrint('WhisperDatasource: Final result: "$finalText"');  // For compare_transcription.py
         }
 
       } catch (e) {

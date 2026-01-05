@@ -78,11 +78,17 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
     Emitter<DictationState> emit,
   ) async {
     debugPrint('DictationBloc: Stopping dictation');
+    
+    // First call stopListening() to allow final result to be sent
+    final result = await stopListening();
+    
+    // Small delay to ensure final result is processed
+    await Future.delayed(const Duration(milliseconds: 200));
+    
+    // Then cancel the stream subscription
     await _speechSubscription?.cancel();
     _speechSubscription = null;
     debugPrint('DictationBloc: Speech subscription cancelled');
-    
-    final result = await stopListening();
     
     result.fold(
       (failure) {

@@ -17,15 +17,22 @@ class TextProcessingProvider implements GrammarCorrectionProvider {
   void _initializeProvider() {
     final ollamaUrl = _settingsService.ollamaUrl;
     final ollamaModel = _settingsService.ollamaModel;
-    final ollamaPrompt = _settingsService.ollamaPrompt;
+    final template = _settingsService.ollamaPromptTemplate;
+    final ollamaPrompt = _settingsService.getPromptForTemplate(template);
+    final contextLength = _settingsService.ollamaContextLength;
+    final temperature = _settingsService.ollamaTemperature;
 
     _ollamaProvider = OllamaGrammarProvider(
       ollamaUrl: ollamaUrl,
       modelName: ollamaModel,
       customPrompt: ollamaPrompt,
+      contextLength: contextLength,
+      temperature: temperature,
     );
 
     debugPrint('TextProcessingProvider: Initialized with URL: $ollamaUrl, Model: $ollamaModel');
+    debugPrint('TextProcessingProvider: Template: ${_settingsService.getTemplateDisplayName(template)}');
+    debugPrint('TextProcessingProvider: Context Length: $contextLength, Temperature: $temperature');
   }
 
   @override
@@ -38,11 +45,13 @@ class TextProcessingProvider implements GrammarCorrectionProvider {
   }
 
   /// Update Ollama configuration and reinitialize provider
-  void updateOllamaConfig(String newUrl, String newModel, {String? newPrompt}) {
+  void updateOllamaConfig(String newUrl, String newModel, {String? newPrompt, int? contextLength, double? temperature}) {
     _ollamaProvider = OllamaGrammarProvider(
       ollamaUrl: newUrl,
       modelName: newModel,
       customPrompt: newPrompt ?? _settingsService.ollamaPrompt,
+      contextLength: contextLength ?? _settingsService.ollamaContextLength,
+      temperature: temperature ?? _settingsService.ollamaTemperature,
     );
     debugPrint('TextProcessingProvider: Ollama config updated to URL: $newUrl, Model: $newModel');
   }
@@ -69,14 +78,21 @@ class TextProcessingProvider implements GrammarCorrectionProvider {
     // Re-initialize provider with current settings to ensure we use latest prompt/model/url
     final currentUrl = _settingsService.ollamaUrl;
     final currentModel = _settingsService.ollamaModel;
-    final currentPrompt = _settingsService.ollamaPrompt;
+    final currentTemplate = _settingsService.ollamaPromptTemplate;
+    final currentPrompt = _settingsService.getPromptForTemplate(currentTemplate);
+    final currentContextLength = _settingsService.ollamaContextLength;
+    final currentTemperature = _settingsService.ollamaTemperature;
 
-    debugPrint('TextProcessingProvider: Current settings - URL: $currentUrl, Model: $currentModel, Prompt length: ${currentPrompt.length}');
+    debugPrint('TextProcessingProvider: Current settings - URL: $currentUrl, Model: $currentModel');
+    debugPrint('TextProcessingProvider: Template: ${_settingsService.getTemplateDisplayName(currentTemplate)}');
+    debugPrint('TextProcessingProvider: Context: $currentContextLength, Temp: $currentTemperature, Prompt length: ${currentPrompt.length}');
 
     _ollamaProvider = OllamaGrammarProvider(
       ollamaUrl: currentUrl,
       modelName: currentModel,
       customPrompt: currentPrompt,
+      contextLength: currentContextLength,
+      temperature: currentTemperature,
     );
 
     // Use Ollama

@@ -18,6 +18,7 @@ enum WhisperModelSize {
 }
 
 enum OllamaPromptTemplate {
+  speechRecognition,  // Optimiert für Spracherkennung (Default)
   grammarCorrection,  // Grammatik- und Rechtschreibkorrektur
   styleFormal,        // Formeller Schreibstil
   styleInformal,      // Informeller Schreibstil
@@ -34,15 +35,46 @@ class SettingsService {
   static const String _ollamaModelKey = 'ollama_model_name';
   static const String _ollamaPromptKey = 'ollama_custom_prompt';
   static const String _ollamaPromptTemplateKey = 'ollama_prompt_template';
+  static const String _ollamaContextLengthKey = 'ollama_context_length';
+  static const String _ollamaTemperatureKey = 'ollama_temperature';
   static const String _sttEngineKey = 'stt_engine';
   static const String _whisperModelKey = 'whisper_model_size';
 
   static const String _defaultOllamaUrl = 'http://localhost:11434';
   static const String _defaultOllamaModel = 'gemma3:1b';
-  static const String _defaultOllamaPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}';
+  static const int _defaultContextLength = 4096; // Good for longer transcriptions
+  static const double _defaultTemperature = 0.3; // Low temperature for more focused corrections
+  
+  // Default to speech recognition optimized prompt
+  static const String _defaultOllamaPrompt = '''Du bist ein Assistent für Spracherkennung. Deine Aufgabe ist es, den transkribierten Text zu verstehen und zu verbessern.
+
+Analysiere den gesamten Kontext des Textes und:
+1. Korrigiere Rechtschreib- und Grammatikfehler
+2. Füge sinnvolle Satzzeichen hinzu (Punkte, Kommas, Fragezeichen, etc.)
+3. Korrigiere Großschreibung (Satzanfänge, Substantive)
+4. Verbessere die Lesbarkeit durch korrekte Absätze
+5. Behalte die ursprüngliche Bedeutung und den Stil bei
+
+Wichtig: Gib NUR den korrigierten Text zurück, ohne Erklärungen oder Kommentare.
+
+Text:
+{TEXT}''';
 
   // Prompt templates
   static const Map<OllamaPromptTemplate, String> _promptTemplates = {
+    OllamaPromptTemplate.speechRecognition: '''Du bist ein Assistent für Spracherkennung. Deine Aufgabe ist es, den transkribierten Text zu verstehen und zu verbessern.
+
+Analysiere den gesamten Kontext des Textes und:
+1. Korrigiere Rechtschreib- und Grammatikfehler
+2. Füge sinnvolle Satzzeichen hinzu (Punkte, Kommas, Fragezeichen, etc.)
+3. Korrigiere Großschreibung (Satzanfänge, Substantive)
+4. Verbessere die Lesbarkeit durch korrekte Absätze
+5. Behalte die ursprüngliche Bedeutung und den Stil bei
+
+Wichtig: Gib NUR den korrigierten Text zurück, ohne Erklärungen oder Kommentare.
+
+Text:
+{TEXT}''',
     OllamaPromptTemplate.grammarCorrection: 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}',
     OllamaPromptTemplate.styleFormal: 'Formuliere den folgenden Text in einem formellen, professionellen Stil um. Verwende höfliche Anrede und sachliche Sprache. Gib nur den umformulierten Text zurück:\n\n{TEXT}',
     OllamaPromptTemplate.styleInformal: 'Formuliere den folgenden Text in einem lockeren, informellen Stil um. Verwende eine freundliche, persönliche Sprache. Gib nur den umformulierten Text zurück:\n\n{TEXT}',
@@ -181,13 +213,13 @@ class SettingsService {
   OllamaPromptTemplate get ollamaPromptTemplate {
     if (!_isInitialized) {
       debugPrint('SettingsService: Not initialized, returning default template');
-      return OllamaPromptTemplate.grammarCorrection;
+      return OllamaPromptTemplate.speechRecognition;
     }
 
-    final templateIndex = _prefs.getInt(_ollamaPromptTemplateKey) ?? OllamaPromptTemplate.grammarCorrection.index;
+    final templateIndex = _prefs.getInt(_ollamaPromptTemplateKey) ?? OllamaPromptTemplate.speechRecognition.index;
     // Ensure the index is valid for current enum values
     if (templateIndex >= OllamaPromptTemplate.values.length) {
-      return OllamaPromptTemplate.grammarCorrection;
+      return OllamaPromptTemplate.speechRecognition;
     }
     return OllamaPromptTemplate.values[templateIndex];
   }
@@ -219,6 +251,8 @@ class SettingsService {
   /// Get display name for a template
   String getTemplateDisplayName(OllamaPromptTemplate template) {
     switch (template) {
+      case OllamaPromptTemplate.speechRecognition:
+        return 'Spracherkennung (empfohlen)';
       case OllamaPromptTemplate.grammarCorrection:
         return 'Grammatik- & Rechtschreibkorrektur';
       case OllamaPromptTemplate.styleFormal:
@@ -241,6 +275,8 @@ class SettingsService {
   /// Get description for a template
   String getTemplateDescription(OllamaPromptTemplate template) {
     switch (template) {
+      case OllamaPromptTemplate.speechRecognition:
+        return 'Optimiert für Spracherkennung: Satzzeichen, Großschreibung, Kontext-Verständnis';
       case OllamaPromptTemplate.grammarCorrection:
         return 'Korrigiert Grammatik und Rechtschreibung';
       case OllamaPromptTemplate.styleFormal:
@@ -319,6 +355,58 @@ class SettingsService {
     }
   }
 
+  /// Get the Ollama context length
+  int get ollamaContextLength {
+    if (!_isInitialized) {
+      return _defaultContextLength;
+    }
+
+    return _prefs.getInt(_ollamaContextLengthKey) ?? _defaultContextLength;
+  }
+
+  /// Set the Ollama context length
+  Future<void> setOllamaContextLength(int contextLength) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Ollama context length');
+      return;
+    }
+
+    try {
+      // Clamp context length between 512 and 32768
+      final clampedLength = contextLength.clamp(512, 32768);
+      await _prefs.setInt(_ollamaContextLengthKey, clampedLength);
+      debugPrint('SettingsService: Ollama context length set to $clampedLength');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Ollama context length: $e');
+    }
+  }
+
+  /// Get the Ollama temperature
+  double get ollamaTemperature {
+    if (!_isInitialized) {
+      return _defaultTemperature;
+    }
+
+    return _prefs.getDouble(_ollamaTemperatureKey) ?? _defaultTemperature;
+  }
+
+  /// Set the Ollama temperature
+  Future<void> setOllamaTemperature(double temperature) async {
+    if (!_isInitialized) {
+      debugPrint('SettingsService: Not initialized, cannot save Ollama temperature');
+      return;
+    }
+
+    try {
+      // Clamp temperature between 0.0 and 2.0
+      final clampedTemp = temperature.clamp(0.0, 2.0);
+      await _prefs.setDouble(_ollamaTemperatureKey, clampedTemp);
+      debugPrint('SettingsService: Ollama temperature set to $clampedTemp');
+    } catch (e) {
+      debugPrint('SettingsService: Failed to save Ollama temperature: $e');
+    }
+  }
+
   /// Check if settings are initialized
   bool get isInitialized => _isInitialized;
 
@@ -332,6 +420,8 @@ class SettingsService {
       await _prefs.remove(_ollamaModelKey);
       await _prefs.remove(_ollamaPromptKey);
       await _prefs.remove(_ollamaPromptTemplateKey);
+      await _prefs.remove(_ollamaContextLengthKey);
+      await _prefs.remove(_ollamaTemperatureKey);
       await _prefs.remove(_sttEngineKey);
       await _prefs.remove(_whisperModelKey);
       debugPrint('SettingsService: Settings reset to defaults');

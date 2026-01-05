@@ -12,6 +12,8 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
   final String modelName;
   final Duration timeout;
   final String customPrompt;
+  final int contextLength;
+  final double temperature;
   
   static const Duration _defaultTimeout = Duration(seconds: 30);
   static const String _generateEndpoint = '/api/generate';
@@ -22,12 +24,16 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
     required this.modelName,
     this.timeout = _defaultTimeout,
     this.customPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}',
+    this.contextLength = 4096,
+    this.temperature = 0.3,
   }) {
     // Enhanced initialization logging
     debugPrint('=== OllamaGrammarProvider Initialization ===');
     debugPrint('OllamaGrammarProvider: URL: $ollamaUrl');
     debugPrint('OllamaGrammarProvider: Model: $modelName');
     debugPrint('OllamaGrammarProvider: Timeout: ${timeout.inSeconds}s');
+    debugPrint('OllamaGrammarProvider: Context Length: $contextLength');
+    debugPrint('OllamaGrammarProvider: Temperature: $temperature');
     debugPrint('OllamaGrammarProvider: Platform: ${Platform.operatingSystem}');
     debugPrint('OllamaGrammarProvider: Tags endpoint: $ollamaUrl$_tagsEndpoint');
     debugPrint('OllamaGrammarProvider: Generate endpoint: $ollamaUrl$_generateEndpoint');
@@ -232,7 +238,10 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
       'model': modelName,
       'prompt': prompt,
       'stream': false,
-      // Simple options like Python version (no complex configurations)
+      'options': {
+        'num_ctx': contextLength,  // Context window size for longer texts
+        'temperature': temperature, // Lower = more focused, higher = more creative
+      },
     };
 
     final requestBody = json.encode(requestData);
