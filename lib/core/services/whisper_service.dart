@@ -27,6 +27,8 @@ class WhisperService {
         return 'ggml-base.bin';
       case WhisperModelSize.small:
         return 'ggml-small.bin';
+      case WhisperModelSize.medium:
+        return 'ggml-medium.bin';
     }
   }
 
@@ -39,6 +41,8 @@ class WhisperService {
         return 'base';
       case WhisperModelSize.small:
         return 'small';
+      case WhisperModelSize.medium:
+        return 'medium';
     }
   }
 

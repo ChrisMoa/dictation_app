@@ -13,8 +13,9 @@ enum SttEngine {
 
 enum WhisperModelSize {
   tiny,    // ~75 MB - Schnell, niedrige Qualität
-  base,    // ~150 MB - Gut, empfohlen
-  small,   // ~500 MB - Sehr gut (könnte crashen)
+  base,    // ~150 MB - Gut, empfohlen für Mobile
+  small,   // ~500 MB - Sehr gut
+  medium,  // ~1.5 GB - Beste Qualität, empfohlen für Desktop
 }
 
 enum OllamaPromptTemplate {
@@ -42,38 +43,52 @@ class SettingsService {
 
   static const String _defaultOllamaUrl = 'http://localhost:11434';
   static const String _defaultOllamaModel = 'gemma3:1b';
-  static const int _defaultContextLength = 4096; // Good for longer transcriptions
-  static const double _defaultTemperature = 0.3; // Low temperature for more focused corrections
+  static const int _defaultContextLength = 8192; // Larger context for better understanding
+  static const double _defaultTemperature = 0.4; // Slightly higher for better reformulation
   
   // Default to speech recognition optimized prompt
-  static const String _defaultOllamaPrompt = '''Du bist ein Assistent für Spracherkennung. Deine Aufgabe ist es, den transkribierten Text zu verstehen und zu verbessern.
+  static const String _defaultOllamaPrompt = '''Du bist ein intelligenter Textverbesserungs-Assistent für Spracherkennung. Analysiere den transkribierten Text als Ganzes und verbessere ihn kontextbasiert.
 
-Analysiere den gesamten Kontext des Textes und:
-1. Korrigiere Rechtschreib- und Grammatikfehler
-2. Füge sinnvolle Satzzeichen hinzu (Punkte, Kommas, Fragezeichen, etc.)
-3. Korrigiere Großschreibung (Satzanfänge, Substantive)
-4. Verbessere die Lesbarkeit durch korrekte Absätze
-5. Behalte die ursprüngliche Bedeutung und den Stil bei
+AUFGABEN:
+1. Analysiere den gesamten Kontext und erkenne die Themen/Abschnitte
+2. Korrigiere Fehler der Spracherkennung (falsch erkannte Wörter, die keinen Sinn ergeben)
+3. Korrigiere Grammatik, Rechtschreibung und Zeichensetzung
+4. Optimiere Satzstruktur und Formulierungen für bessere Lesbarkeit
+5. Entferne Füllwörter, Wiederholungen und typische Sprachfehler
+6. Verbessere Satzübergänge bei Themenwechseln
+7. Behalte die ursprüngliche Bedeutung und Intention bei
 
-Wichtig: Gib NUR den korrigierten Text zurück, ohne Erklärungen oder Kommentare.
+WICHTIG:
+- Gib NUR den verbesserten Text zurück, keine Erklärungen
+- Behalte alle wichtigen Informationen bei
+- Verwende natürliches, flüssiges Deutsch
+- Bei Themenwechseln: Sorge für klare Absätze
+- Korrigiere auch Wörter, die die Spracherkennung falsch verstanden hat
 
-Text:
+TEXT:
 {TEXT}''';
 
   // Prompt templates
   static const Map<OllamaPromptTemplate, String> _promptTemplates = {
-    OllamaPromptTemplate.speechRecognition: '''Du bist ein Assistent für Spracherkennung. Deine Aufgabe ist es, den transkribierten Text zu verstehen und zu verbessern.
+    OllamaPromptTemplate.speechRecognition: '''Du bist ein intelligenter Textverbesserungs-Assistent für Spracherkennung. Analysiere den transkribierten Text als Ganzes und verbessere ihn kontextbasiert.
 
-Analysiere den gesamten Kontext des Textes und:
-1. Korrigiere Rechtschreib- und Grammatikfehler
-2. Füge sinnvolle Satzzeichen hinzu (Punkte, Kommas, Fragezeichen, etc.)
-3. Korrigiere Großschreibung (Satzanfänge, Substantive)
-4. Verbessere die Lesbarkeit durch korrekte Absätze
-5. Behalte die ursprüngliche Bedeutung und den Stil bei
+AUFGABEN:
+1. Analysiere den gesamten Kontext und erkenne die Themen/Abschnitte
+2. Korrigiere Fehler der Spracherkennung (falsch erkannte Wörter, die keinen Sinn ergeben)
+3. Korrigiere Grammatik, Rechtschreibung und Zeichensetzung
+4. Optimiere Satzstruktur und Formulierungen für bessere Lesbarkeit
+5. Entferne Füllwörter, Wiederholungen und typische Sprachfehler
+6. Verbessere Satzübergänge bei Themenwechseln
+7. Behalte die ursprüngliche Bedeutung und Intention bei
 
-Wichtig: Gib NUR den korrigierten Text zurück, ohne Erklärungen oder Kommentare.
+WICHTIG:
+- Gib NUR den verbesserten Text zurück, keine Erklärungen
+- Behalte alle wichtigen Informationen bei
+- Verwende natürliches, flüssiges Deutsch
+- Bei Themenwechseln: Sorge für klare Absätze
+- Korrigiere auch Wörter, die die Spracherkennung falsch verstanden hat
 
-Text:
+TEXT:
 {TEXT}''',
     OllamaPromptTemplate.grammarCorrection: 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}',
     OllamaPromptTemplate.styleFormal: 'Formuliere den folgenden Text in einem formellen, professionellen Stil um. Verwende höfliche Anrede und sachliche Sprache. Gib nur den umformulierten Text zurück:\n\n{TEXT}',
@@ -276,7 +291,7 @@ Text:
   String getTemplateDescription(OllamaPromptTemplate template) {
     switch (template) {
       case OllamaPromptTemplate.speechRecognition:
-        return 'Optimiert für Spracherkennung: Satzzeichen, Großschreibung, Kontext-Verständnis';
+        return 'Intelligente Textverbesserung: Korrigiert Spracherkennungsfehler, optimiert Formulierungen, verbessert Kontext';
       case OllamaPromptTemplate.grammarCorrection:
         return 'Korrigiert Grammatik und Rechtschreibung';
       case OllamaPromptTemplate.styleFormal:

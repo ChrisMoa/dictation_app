@@ -247,6 +247,9 @@ class _SettingsPageState extends State<SettingsPage>
       case WhisperModelSize.small:
         modelName = 'small';
         break;
+      case WhisperModelSize.medium:
+        modelName = 'medium';
+        break;
     }
 
     final appDir = await getApplicationDocumentsDirectory();
@@ -293,9 +296,11 @@ class _SettingsPageState extends State<SettingsPage>
       case WhisperModelSize.tiny:
         return {'title': 'Tiny', 'size': '~75 MB', 'desc': 'Schnell, niedrige Qualität'};
       case WhisperModelSize.base:
-        return {'title': 'Base', 'size': '~150 MB', 'desc': 'Gute Balance (Empfohlen)'};
+        return {'title': 'Base', 'size': '~150 MB', 'desc': 'Gute Balance (Mobile)'};
       case WhisperModelSize.small:
-        return {'title': 'Small', 'size': '~500 MB', 'desc': 'Beste Qualität'};
+        return {'title': 'Small', 'size': '~500 MB', 'desc': 'Sehr gut'};
+      case WhisperModelSize.medium:
+        return {'title': 'Medium', 'size': '~1.5 GB', 'desc': 'Beste Qualität (Desktop)'};
     }
   }
 
@@ -439,7 +444,7 @@ class _SettingsPageState extends State<SettingsPage>
                     title: info['title']!,
                     subtitle: '${info['size']} - ${info['desc']}',
                     isSelected: _currentWhisperModel == size,
-                    isRecommended: size == WhisperModelSize.base,
+                    isRecommended: size == WhisperModelSize.medium,
                     onTap: () => _updateWhisperModel(size),
                   );
                 }).toList(),

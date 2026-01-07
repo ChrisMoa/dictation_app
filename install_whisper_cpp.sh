@@ -94,8 +94,8 @@ echo "Building whisper.cpp from source"
 echo "================================================"
 echo ""
 
-# Set installation directory
-INSTALL_DIR="/tmp/whisper.cpp"
+# Set installation directory to a permanent location
+INSTALL_DIR="$HOME/.local/share/dictation_app/whisper.cpp"
 
 # Remove existing installation if present
 if [ -d "$INSTALL_DIR" ]; then
@@ -123,9 +123,10 @@ cd build
 echo "⚙️  Configuring build with cmake (CPU-only mode)..."
 cmake .. -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_METAL=OFF -DGGML_OPENCL=OFF
 
-# Build the project
-echo "🔧 Compiling..."
-cmake --build . --config Release
+# Build the project using all CPU cores
+CORES=$(nproc)
+echo "🔧 Compiling with $CORES parallel jobs..."
+cmake --build . --config Release -j $CORES
 
 echo ""
 echo "✅ Build completed successfully!"
@@ -283,7 +284,7 @@ echo "System dependencies:"
 echo "  - pulseaudio-utils (for audio recording)"
 echo ""
 echo "Whisper.cpp:"
-echo "  - CLI tool: /tmp/whisper.cpp/build/bin/whisper-cli"
+echo "  - CLI tool: $INSTALL_DIR/build/bin/whisper-cli"
 echo "  - Built with CPU-only support (no GPU)"
 echo ""
 echo "Model: $MODEL_PATH"

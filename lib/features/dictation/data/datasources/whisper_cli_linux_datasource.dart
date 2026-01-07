@@ -121,8 +121,11 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
     return true;
   }
 
-  // Path to whisper.cpp executable
-  static const String _whisperPath = '/tmp/whisper.cpp/build/bin/whisper-cli';
+  // Path to whisper.cpp executable (permanent installation location)
+  static String get _whisperPath {
+    final homeDir = Platform.environment['HOME'] ?? '/home/${Platform.environment['USER']}';
+    return '$homeDir/.local/share/dictation_app/whisper.cpp/build/bin/whisper-cli';
+  }
 
   // Get model path based on settings
   static String _getModelPath(WhisperModelSize modelSize) {
@@ -140,6 +143,9 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
         break;
       case WhisperModelSize.small:
         modelFile = 'ggml-small.bin';
+        break;
+      case WhisperModelSize.medium:
+        modelFile = 'ggml-medium.bin';
         break;
     }
 

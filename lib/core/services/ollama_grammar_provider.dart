@@ -23,9 +23,28 @@ class OllamaGrammarProvider implements GrammarCorrectionProvider {
     required this.ollamaUrl,
     required this.modelName,
     this.timeout = _defaultTimeout,
-    this.customPrompt = 'Schreib den folgenden Text mit korrekter deutscher Grammatik und Rechtschreibung neu. Verändere dabei nicht die Bedeutung. Gib nur den korrigierten Text zurück, ohne zusätzliche Erklärungen:\n\n{TEXT}',
-    this.contextLength = 4096,
-    this.temperature = 0.3,
+    this.customPrompt = '''Du bist ein intelligenter Textverbesserungs-Assistent für Spracherkennung. Analysiere den transkribierten Text als Ganzes und verbessere ihn kontextbasiert.
+
+AUFGABEN:
+1. Analysiere den gesamten Kontext und erkenne die Themen/Abschnitte
+2. Korrigiere Fehler der Spracherkennung (falsch erkannte Wörter, die keinen Sinn ergeben)
+3. Korrigiere Grammatik, Rechtschreibung und Zeichensetzung
+4. Optimiere Satzstruktur und Formulierungen für bessere Lesbarkeit
+5. Entferne Füllwörter, Wiederholungen und typische Sprachfehler
+6. Verbessere Satzübergänge bei Themenwechseln
+7. Behalte die ursprüngliche Bedeutung und Intention bei
+
+WICHTIG:
+- Gib NUR den verbesserten Text zurück, keine Erklärungen
+- Behalte alle wichtigen Informationen bei
+- Verwende natürliches, flüssiges Deutsch
+- Bei Themenwechseln: Sorge für klare Absätze
+- Korrigiere auch Wörter, die die Spracherkennung falsch verstanden hat
+
+TEXT:
+{TEXT}''',
+    this.contextLength = 8192,
+    this.temperature = 0.4,
   }) {
     // Enhanced initialization logging
     debugPrint('=== OllamaGrammarProvider Initialization ===');
