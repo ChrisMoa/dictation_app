@@ -78,7 +78,12 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
     Emitter<DictationState> emit,
   ) async {
     debugPrint('DictationBloc: Stopping dictation');
-    
+
+    // Emit processing state immediately to show user that we're finalizing
+    final currentText = _currentText + _partialText;
+    emit(DictationProcessing(currentText: currentText));
+    debugPrint('DictationBloc: Emitted DictationProcessing state');
+
     // First call stopListening() to allow final result to be sent
     final result = await stopListening();
     

@@ -62,7 +62,7 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
     
     // Check for common Whisper hallucinations/noise patterns
     final lowerText = cleanText.toLowerCase();
-    
+
     // Filter obvious hallucinations - compact list
     final noisePatterns = [
       'untertitel',
@@ -79,7 +79,7 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
       '[applaus]',
       '[applause]',
     ];
-    
+
     // Reject if the ENTIRE text is a noise pattern
     for (final pattern in noisePatterns) {
       if (lowerText == pattern || lowerText == '[$pattern]') {

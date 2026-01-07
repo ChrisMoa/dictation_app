@@ -24,6 +24,15 @@ class DictationListening extends DictationState {
   List<Object> get props => [currentText, partialText];
 }
 
+class DictationProcessing extends DictationState {
+  final String currentText;
+
+  const DictationProcessing({required this.currentText});
+
+  @override
+  List<Object> get props => [currentText];
+}
+
 class DictationStopped extends DictationState {
   final String finalText;
 

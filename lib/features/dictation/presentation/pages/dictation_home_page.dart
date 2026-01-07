@@ -174,6 +174,9 @@ class _DictationHomePageState extends State<DictationHomePage>
                 if (state is DictationListening) {
                   _textController.text = state.currentText + state.partialText;
                   if (!_isListening) setState(() => _isListening = true);
+                } else if (state is DictationProcessing) {
+                  _textController.text = state.currentText;
+                  if (_isListening) setState(() => _isListening = false);
                 } else if (state is DictationStopped) {
                   _textController.text = state.finalText;
                   if (_isListening) setState(() => _isListening = false);
@@ -348,10 +351,13 @@ class _DictationHomePageState extends State<DictationHomePage>
         if (state is DictationListening) {
           statusType = AppStatusType.success;
           statusText = 'Aufnahme läuft...';
+        } else if (state is DictationProcessing) {
+          statusType = AppStatusType.warning;
+          statusText = 'Finalisiere Aufnahme...';
         } else if (state is DictationLoading || state is SpellCheckLoading) {
           statusType = AppStatusType.warning;
-          statusText = state is SpellCheckLoading 
-            ? 'Rechtschreibprüfung...' 
+          statusText = state is SpellCheckLoading
+            ? 'Rechtschreibprüfung...'
             : 'Verarbeitung...';
         } else if (state is DictationError) {
           statusType = AppStatusType.error;
@@ -378,12 +384,13 @@ class _DictationHomePageState extends State<DictationHomePage>
       builder: (context, state) {
         final isLoading = state is DictationLoading;
         final isSpellChecking = state is SpellCheckLoading;
-        
+        final isProcessing = state is DictationProcessing;
+
         return Column(
           children: [
             RecordingButton(
               isRecording: _isListening,
-              isProcessing: isLoading || isSpellChecking,
+              isProcessing: isLoading || isSpellChecking || isProcessing,
               onPressed: _toggleDictation,
             ),
             const SizedBox(height: AppSpacing.sm),
