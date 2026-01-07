@@ -16,6 +16,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
   StreamSubscription? _speechSubscription;
   String _currentText = '';
   String _partialText = '';
+  bool _isStopping = false;
 
   DictationBloc({
     required this.startListening,
@@ -38,8 +39,9 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
     Emitter<DictationState> emit,
   ) async {
     debugPrint('DictationBloc: Starting dictation with locale: ${event.localeId}');
+    _isStopping = false; // Reset stopping flag when starting
     emit(DictationLoading());
-    
+
     final result = await startListening(localeId: event.localeId);
     
     result.fold(
@@ -79,6 +81,9 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
   ) async {
     debugPrint('DictationBloc: Stopping dictation');
 
+    // Set stopping flag to prevent new Listening states from being emitted
+    _isStopping = true;
+
     // Emit processing state immediately to show user that we're finalizing
     final currentText = _currentText + _partialText;
     emit(DictationProcessing(currentText: currentText));
@@ -98,6 +103,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
     result.fold(
       (failure) {
         debugPrint('DictationBloc: Failed to stop dictation: ${failure.message}');
+        _isStopping = false; // Reset stopping flag on error too
         emit(DictationError(message: failure.message));
       },
       (_) {
@@ -105,7 +111,8 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
         debugPrint('DictationBloc: Dictation stopped successfully. Final text: "$finalText"');
         _currentText = finalText;
         _partialText = '';
-        
+        _isStopping = false; // Reset stopping flag
+
         // Always emit DictationStopped first to update UI
         emit(DictationStopped(finalText: finalText));
         
@@ -151,7 +158,20 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
     Emitter<DictationState> emit,
   ) {
     debugPrint('DictationBloc: Processing speech result - Words: "${event.recognizedWords}", Final: ${event.finalResult}');
-    
+
+    // If we're stopping, don't emit new Listening states
+    if (_isStopping) {
+      debugPrint('DictationBloc: Ignoring speech result because we are stopping');
+      // Still update the text internally so it's included in the final result
+      if (event.finalResult) {
+        _currentText = '$_currentText${event.recognizedWords} ';
+        _partialText = '';
+      } else {
+        _partialText = event.recognizedWords;
+      }
+      return;
+    }
+
     if (event.finalResult) {
       _currentText = '$_currentText${event.recognizedWords} ';
       _partialText = '';
@@ -160,7 +180,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
       _partialText = event.recognizedWords;
       debugPrint('DictationBloc: Partial result processed. Partial text: "$_partialText"');
     }
-    
+
     emit(DictationListening(
       currentText: _currentText,
       partialText: _partialText,
