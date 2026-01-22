@@ -16,7 +16,9 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
   StreamSubscription? _speechSubscription;
   String _currentText = '';
   String _partialText = '';
+  double? _soundLevel;
   bool _isStopping = false;
+  Completer<void>? _finalResultCompleter;
 
   DictationBloc({
     required this.startListening,
@@ -40,6 +42,8 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
   ) async {
     debugPrint('DictationBloc: Starting dictation with locale: ${event.localeId}');
     _isStopping = false; // Reset stopping flag when starting
+    _soundLevel = null;
+    _finalResultCompleter = null;
     emit(DictationLoading());
 
     final result = await startListening(localeId: event.localeId);
@@ -57,6 +61,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
             add(SpeechResultReceivedEvent(
               recognizedWords: speechResult.recognizedWords,
               finalResult: speechResult.finalResult,
+              soundLevel: speechResult.soundLevel,
             ));
           },
           onError: (error) {
@@ -70,6 +75,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
         emit(DictationListening(
           currentText: _currentText,
           partialText: _partialText,
+          soundLevel: _soundLevel,
         ));
       },
     );
@@ -83,6 +89,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
 
     // Set stopping flag to prevent new Listening states from being emitted
     _isStopping = true;
+    _finalResultCompleter = Completer<void>();
 
     // Emit processing state immediately to show user that we're finalizing
     final currentText = _currentText + _partialText;
@@ -91,9 +98,20 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
 
     // First call stopListening() to allow final result to be sent
     final result = await stopListening();
-    
-    // Small delay to ensure final result is processed
-    await Future.delayed(const Duration(milliseconds: 200));
+
+    // Wait briefly for a final result to arrive before cancelling subscription
+    try {
+      await _finalResultCompleter?.future.timeout(
+        const Duration(seconds: 2),
+        onTimeout: () {
+          debugPrint('DictationBloc: Timed out waiting for final result');
+        },
+      );
+    } catch (e) {
+      debugPrint('DictationBloc: Error while waiting for final result: $e');
+    } finally {
+      _finalResultCompleter = null;
+    }
     
     // Then cancel the stream subscription
     await _speechSubscription?.cancel();
@@ -111,6 +129,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
         debugPrint('DictationBloc: Dictation stopped successfully. Final text: "$finalText"');
         _currentText = finalText;
         _partialText = '';
+        _soundLevel = null;
         _isStopping = false; // Reset stopping flag
 
         // Always emit DictationStopped first to update UI
@@ -159,16 +178,39 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
   ) {
     debugPrint('DictationBloc: Processing speech result - Words: "${event.recognizedWords}", Final: ${event.finalResult}');
 
+    if (event.soundLevel != null) {
+      _soundLevel = event.soundLevel;
+    }
+
+    final isSoundLevelOnly = event.soundLevel != null &&
+        event.recognizedWords.isEmpty &&
+        !event.finalResult;
+
     // If we're stopping, don't emit new Listening states
     if (_isStopping) {
       debugPrint('DictationBloc: Ignoring speech result because we are stopping');
+      if (isSoundLevelOnly) {
+        return;
+      }
       // Still update the text internally so it's included in the final result
       if (event.finalResult) {
         _currentText = '$_currentText${event.recognizedWords} ';
         _partialText = '';
+        if (_finalResultCompleter != null && !_finalResultCompleter!.isCompleted) {
+          _finalResultCompleter!.complete();
+        }
       } else {
         _partialText = event.recognizedWords;
       }
+      return;
+    }
+
+    if (isSoundLevelOnly) {
+      emit(DictationListening(
+        currentText: _currentText,
+        partialText: _partialText,
+        soundLevel: _soundLevel,
+      ));
       return;
     }
 
@@ -184,6 +226,7 @@ class DictationBloc extends Bloc<DictationEvent, DictationState> {
     emit(DictationListening(
       currentText: _currentText,
       partialText: _partialText,
+      soundLevel: _soundLevel,
     ));
   }
 

@@ -16,6 +16,7 @@ class WhisperDatasourceImpl implements SpeechDatasource {
 
   StreamController<SpeechResultModel>? _streamController;
   Timer? _transcriptionTimer;
+  StreamSubscription<Amplitude>? _amplitudeSubscription;
   bool _isRecording = false;
   bool _shouldKeepListening = false;
   String? _currentRecordingPath;
@@ -109,6 +110,70 @@ class WhisperDatasourceImpl implements SpeechDatasource {
     return true;
   }
 
+  String _buildInitialPrompt({int maxWords = 20}) {
+    if (_accumulatedText.isEmpty) return '';
+    final words = _accumulatedText
+        .join(' ')
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.length <= maxWords) {
+      return words.join(' ');
+    }
+    return words.sublist(words.length - maxWords).join(' ');
+  }
+
+  /// Remove duplicate words at chunk boundaries to prevent repetition from overlapping chunks
+  String _deduplicateChunkBoundary(String newChunk) {
+    if (_accumulatedText.isEmpty || newChunk.trim().isEmpty) {
+      return newChunk;
+    }
+
+    final previousText = _accumulatedText.join(' ');
+    final prevWords = previousText.split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
+    final newWords = newChunk.split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty)
+        .toList();
+
+    if (prevWords.isEmpty || newWords.isEmpty) {
+      return newChunk;
+    }
+
+    // Check for overlap: see if the beginning of newChunk matches the end of previous text
+    // We check up to the last 5 words of previous chunk
+    final checkWindow = prevWords.length < 5 ? prevWords.length : 5;
+
+    for (int overlapSize = checkWindow; overlapSize >= 2; overlapSize--) {
+      final prevEnding = prevWords.sublist(prevWords.length - overlapSize);
+      final newBeginning = newWords.length >= overlapSize
+          ? newWords.sublist(0, overlapSize)
+          : newWords;
+
+      // Case-insensitive comparison for better matching
+      bool matches = true;
+      for (int i = 0; i < prevEnding.length && i < newBeginning.length; i++) {
+        if (prevEnding[i].toLowerCase() != newBeginning[i].toLowerCase()) {
+          matches = false;
+          break;
+        }
+      }
+
+      if (matches && prevEnding.length == newBeginning.length) {
+        // Found overlap - remove the duplicate words from the beginning of new chunk
+        final deduplicatedWords = newWords.sublist(overlapSize);
+        final result = deduplicatedWords.join(' ');
+        debugPrint('WhisperDatasource: Detected ${overlapSize}-word overlap, removed duplicates');
+        debugPrint('WhisperDatasource: Original new chunk: "$newChunk"');
+        debugPrint('WhisperDatasource: Deduplicated: "$result"');
+        return result;
+      }
+    }
+
+    return newChunk;
+  }
+
   @override
   Future<bool> initialize() async {
     debugPrint('WhisperDatasource: Initializing Whisper speech recognition');
@@ -172,8 +237,31 @@ class WhisperDatasourceImpl implements SpeechDatasource {
     _streamController = StreamController<SpeechResultModel>.broadcast();
 
     await _startRecordingSession();
+    _startAmplitudeMonitoring();
 
     return _streamController!.stream;
+  }
+
+  void _startAmplitudeMonitoring() {
+    if (_amplitudeSubscription != null) return;
+
+    try {
+      _amplitudeSubscription = _audioRecorder
+          .onAmplitudeChanged(const Duration(milliseconds: 150))
+          .listen((amplitude) {
+        if (_shouldKeepListening) {
+          _streamController?.add(SpeechResultModel(
+            recognizedWords: '',
+            hasConfidenceRating: false,
+            confidence: 0.0,
+            finalResult: false,
+            soundLevel: amplitude.current,
+          ));
+        }
+      });
+    } catch (e) {
+      debugPrint('WhisperDatasource: Failed to start amplitude monitoring: $e');
+    }
   }
 
   Future<void> _startRecordingSession() async {
@@ -273,19 +361,10 @@ class WhisperDatasourceImpl implements SpeechDatasource {
         return;
       }
 
-      // Emit feedback that transcription is in progress
-      _streamController?.add(SpeechResultModel(
-        recognizedWords: _accumulatedText.isEmpty
-            ? '🎤 Transkribiere...'
-            : '${_accumulatedText.join(' ')} 🎤',
-        hasConfidenceRating: false,
-        confidence: 0.0,
-        finalResult: false,
-      ));
-
       // Transcribe snapshot with Whisper in background
       debugPrint('WhisperDatasource: 🎤 Starting Whisper transcription of snapshot');
       final language = _currentLocaleId.split('_')[0]; // 'de' from 'de_DE'
+      final prompt = _buildInitialPrompt();
       
       final transcribeStart = DateTime.now();
       final result = await whisperService.transcribe(
@@ -294,6 +373,7 @@ class WhisperDatasourceImpl implements SpeechDatasource {
         isTranslate: false,
         isNoTimestamps: true,
         splitOnWord: true,
+        initialPrompt: prompt.isEmpty ? null : prompt,
       );
       final transcribeDuration = DateTime.now().difference(transcribeStart);
 
@@ -302,22 +382,30 @@ class WhisperDatasourceImpl implements SpeechDatasource {
 
       if (result.success && result.text.trim().isNotEmpty) {
         final transcribedText = result.text.trim();
-        
+
         // Filter out gibberish/noise - only accept meaningful speech
         if (_isValidSpeech(transcribedText)) {
-          // Add to accumulated text
-          _accumulatedText.add(transcribedText);
+          // Remove any duplicate words at chunk boundaries
+          final deduplicatedText = _deduplicateChunkBoundary(transcribedText);
 
-          // Emit partial result with accumulated text
-          _streamController?.add(SpeechResultModel(
-            recognizedWords: _accumulatedText.join(' '),
-            hasConfidenceRating: false,
-            confidence: 0.8,
-            finalResult: false,
-          ));
+          // Only add if there's still text after deduplication
+          if (deduplicatedText.trim().isNotEmpty) {
+            // Add to accumulated text
+            _accumulatedText.add(deduplicatedText);
 
-          debugPrint('WhisperDatasource: ✅ Emitted partial result: "${_accumulatedText.join(' ')}"');
-          debugPrint('WhisperDatasource: Accumulated segments: ${_accumulatedText.length}');
+            // Emit partial result with accumulated text
+            _streamController?.add(SpeechResultModel(
+              recognizedWords: _accumulatedText.join(' '),
+              hasConfidenceRating: false,
+              confidence: 0.8,
+              finalResult: false,
+            ));
+
+            debugPrint('WhisperDatasource: ✅ Emitted partial result: "${_accumulatedText.join(' ')}"');
+            debugPrint('WhisperDatasource: Accumulated segments: ${_accumulatedText.length}');
+          } else {
+            debugPrint('WhisperDatasource: ⚠️ Chunk was completely deduplicated, skipping');
+          }
         } else {
           debugPrint('WhisperDatasource: ⚠️ Filtered out invalid/noise text: "$transcribedText"');
         }
@@ -379,6 +467,9 @@ class WhisperDatasourceImpl implements SpeechDatasource {
     debugPrint('WhisperDatasource: Stopping listening');
     _shouldKeepListening = false;
 
+    await _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
+
     // Cancel timers
     _transcriptionTimer?.cancel();
     _transcriptionTimer = null;
@@ -403,36 +494,51 @@ class WhisperDatasourceImpl implements SpeechDatasource {
               // Transcribe final chunk with aggressive preservation
               debugPrint('WhisperDatasource: Transcribing final chunk');
               final language = _currentLocaleId.split('_')[0];
+              final prompt = _buildInitialPrompt();
               final result = await whisperService.transcribe(
                 audioPath: path,
                 language: language,
                 isTranslate: false,
                 isNoTimestamps: true,
                 splitOnWord: true,
+                initialPrompt: prompt.isEmpty ? null : prompt,
               );
 
               if (result.success && result.text.trim().isNotEmpty) {
                 final text = result.text.trim();
-                
+
                 // Aggressive final chunk preservation
                 if (_isValidSpeech(text, isFinalChunk: true)) {
-                  _accumulatedText.add(text);
-                  debugPrint('WhisperDatasource: ✅ Final chunk added: "$text"');
+                  // Remove any duplicate words at chunk boundaries
+                  final deduplicatedText = _deduplicateChunkBoundary(text);
+
+                  if (deduplicatedText.trim().isNotEmpty) {
+                    _accumulatedText.add(deduplicatedText);
+                    debugPrint('WhisperDatasource: ✅ Final chunk added: "$deduplicatedText"');
+                  } else {
+                    debugPrint('WhisperDatasource: ⚠️ Final chunk was completely deduplicated');
+                  }
                 } else {
                   // Recovery: extract ANY recognizable words
                   final cleanText = text.replaceAll(RegExp(r'\[.*?\]'), '').trim();
                   final words = cleanText.split(RegExp(r'\s+'));
-                  final realWords = words.where((w) => 
+                  final realWords = words.where((w) =>
                     w.isNotEmpty && RegExp(r'[a-zA-ZäöüÄÖÜß]').hasMatch(w)
                   ).toList();
-                  
+
                   if (realWords.isNotEmpty) {
                     final recoveredText = realWords.join(' ');
-                    _accumulatedText.add(recoveredText);
-                    debugPrint('WhisperDatasource: 🔄 Recovered final words: "$recoveredText"');
+                    final deduplicatedRecoveredText = _deduplicateChunkBoundary(recoveredText);
+                    if (deduplicatedRecoveredText.trim().isNotEmpty) {
+                      _accumulatedText.add(deduplicatedRecoveredText);
+                      debugPrint('WhisperDatasource: 🔄 Recovered final words: "$deduplicatedRecoveredText"');
+                    }
                   } else if (RegExp(r'[a-zA-ZäöüÄÖÜß]{2,}').hasMatch(cleanText)) {
-                    _accumulatedText.add(cleanText);
-                    debugPrint('WhisperDatasource: 🆘 Last resort - keeping final chunk: "$cleanText"');
+                    final deduplicatedCleanText = _deduplicateChunkBoundary(cleanText);
+                    if (deduplicatedCleanText.trim().isNotEmpty) {
+                      _accumulatedText.add(deduplicatedCleanText);
+                      debugPrint('WhisperDatasource: 🆘 Last resort - keeping final chunk: "$deduplicatedCleanText"');
+                    }
                   }
                 }
               }

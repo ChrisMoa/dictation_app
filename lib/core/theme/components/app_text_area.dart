@@ -11,6 +11,7 @@ class AppTextArea extends StatelessWidget {
   final bool isActive;
   final Widget? suffix;
   final FocusNode? focusNode;
+  final TextSpan? richText;
 
   const AppTextArea({
     super.key,
@@ -22,12 +23,44 @@ class AppTextArea extends StatelessWidget {
     this.isActive = false,
     this.suffix,
     this.focusNode,
+    this.richText,
   });
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+
+    final content = richText != null
+        ? SingleChildScrollView(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: SelectableText.rich(
+                richText!,
+                textAlign: TextAlign.start,
+              ),
+            ),
+          )
+        : TextField(
+            controller: controller,
+            focusNode: focusNode,
+            readOnly: readOnly,
+            maxLines: maxLines,
+            expands: expands,
+            textAlignVertical: TextAlignVertical.top,
+            style: theme.textTheme.bodyLarge?.copyWith(
+              height: 1.6,
+            ),
+            decoration: InputDecoration(
+              hintText: hintText,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: const EdgeInsets.all(AppSpacing.md),
+              filled: false,
+            ),
+          );
 
     return Container(
       decoration: BoxDecoration(
@@ -52,25 +85,7 @@ class AppTextArea extends StatelessWidget {
       child: Column(
         children: [
           Expanded(
-            child: TextField(
-              controller: controller,
-              focusNode: focusNode,
-              readOnly: readOnly,
-              maxLines: maxLines,
-              expands: expands,
-              textAlignVertical: TextAlignVertical.top,
-              style: theme.textTheme.bodyLarge?.copyWith(
-                height: 1.6,
-              ),
-              decoration: InputDecoration(
-                hintText: hintText,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: const EdgeInsets.all(AppSpacing.md),
-                filled: false,
-              ),
-            ),
+            child: content,
           ),
           if (suffix != null) ...[
             const Divider(height: 1),

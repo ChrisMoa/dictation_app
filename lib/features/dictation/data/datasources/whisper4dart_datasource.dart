@@ -13,10 +13,10 @@ class Whisper4DartDatasource implements SpeechDatasource {
 
   StreamController<SpeechResultModel>? _streamController;
   Timer? _transcriptionTimer;
+  StreamSubscription<Amplitude>? _amplitudeSubscription;
   bool _isRecording = false;
   bool _shouldKeepListening = false;
   String? _currentRecordingPath;
-  String _currentLocaleId = 'de_DE';
   int _recordingCounter = 0;
   bool _isTranscribing = false;
   final List<String> _accumulatedText = [];
@@ -103,13 +103,35 @@ class Whisper4DartDatasource implements SpeechDatasource {
       throw Exception('Recording permission denied');
     }
 
-    _currentLocaleId = localeId;
     _shouldKeepListening = true;
     _streamController = StreamController<SpeechResultModel>.broadcast();
 
     await _startRecordingSession();
+    _startAmplitudeMonitoring();
 
     return _streamController!.stream;
+  }
+
+  void _startAmplitudeMonitoring() {
+    if (_amplitudeSubscription != null) return;
+
+    try {
+      _amplitudeSubscription = _audioRecorder
+          .onAmplitudeChanged(const Duration(milliseconds: 150))
+          .listen((amplitude) {
+        if (_shouldKeepListening) {
+          _streamController?.add(SpeechResultModel(
+            recognizedWords: '',
+            hasConfidenceRating: false,
+            confidence: 0.0,
+            finalResult: false,
+            soundLevel: amplitude.current,
+          ));
+        }
+      });
+    } catch (e) {
+      debugPrint('Whisper4Dart: Failed to start amplitude monitoring: $e');
+    }
   }
 
   Future<void> _startRecordingSession() async {
@@ -207,20 +229,8 @@ class Whisper4DartDatasource implements SpeechDatasource {
         return;
       }
 
-      // Emit feedback that transcription is in progress
-      _streamController?.add(SpeechResultModel(
-        recognizedWords: _accumulatedText.isEmpty
-            ? '🎤 Transkribiere...'
-            : '${_accumulatedText.join(' ')} 🎤',
-        hasConfidenceRating: false,
-        confidence: 0.0,
-        finalResult: false,
-      ));
-
       // Transcribe snapshot with Whisper4Dart
       debugPrint('Whisper4Dart: 🎤 Starting Whisper transcription of snapshot');
-      final language = _currentLocaleId.split('_')[0]; // 'de' from 'de_DE'
-
       final transcribeStart = DateTime.now();
 
       // Use whisper4dart to transcribe
@@ -307,6 +317,9 @@ class Whisper4DartDatasource implements SpeechDatasource {
   Future<void> stopListening() async {
     debugPrint('Whisper4Dart: Stopping listening');
     _shouldKeepListening = false;
+
+    await _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
 
     // Cancel timers
     _transcriptionTimer?.cancel();

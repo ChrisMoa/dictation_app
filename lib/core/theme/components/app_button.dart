@@ -174,12 +174,14 @@ class AppIconButton extends StatelessWidget {
 class RecordingButton extends StatefulWidget {
   final bool isRecording;
   final bool isProcessing;
+  final double? soundLevel;
   final VoidCallback? onPressed;
 
   const RecordingButton({
     super.key,
     required this.isRecording,
     this.isProcessing = false,
+    this.soundLevel,
     this.onPressed,
   });
 
@@ -237,11 +239,18 @@ class _RecordingButtonState extends State<RecordingButton>
       buttonIcon = Icons.mic_rounded;
     }
 
+    final soundLevel = widget.soundLevel ?? 0.0;
+    final normalizedLevel = (soundLevel / 40.0).clamp(0.0, 1.0);
+    final soundScale = 1.0 + (normalizedLevel * 0.06);
+    final glowStrength = normalizedLevel * 6.0;
+
     return AnimatedBuilder(
       animation: _scaleAnimation,
       builder: (context, child) {
+        final baseScale = widget.isRecording ? _scaleAnimation.value : 1.0;
+        final combinedScale = widget.isRecording ? baseScale * soundScale : baseScale;
         return Transform.scale(
-          scale: widget.isRecording ? _scaleAnimation.value : 1.0,
+          scale: combinedScale,
           child: Container(
             width: 80,
             height: 80,
@@ -251,8 +260,8 @@ class _RecordingButtonState extends State<RecordingButton>
               boxShadow: [
                 BoxShadow(
                   color: buttonColor.withValues(alpha: 0.4),
-                  blurRadius: widget.isRecording ? 24 : 12,
-                  spreadRadius: widget.isRecording ? 4 : 0,
+                  blurRadius: widget.isRecording ? 24 + glowStrength : 12,
+                  spreadRadius: widget.isRecording ? 4 + (glowStrength * 0.25) : 0,
                 ),
               ],
             ),

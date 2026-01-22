@@ -6,6 +6,7 @@ class SpeechResultModel extends SpeechResult {
     required super.hasConfidenceRating,
     required super.confidence,
     required super.finalResult,
+    super.soundLevel,
   });
 
   factory SpeechResultModel.fromEntity(SpeechResult entity) {
@@ -14,6 +15,7 @@ class SpeechResultModel extends SpeechResult {
       hasConfidenceRating: entity.hasConfidenceRating,
       confidence: entity.confidence,
       finalResult: entity.finalResult,
+      soundLevel: entity.soundLevel,
     );
   }
 }

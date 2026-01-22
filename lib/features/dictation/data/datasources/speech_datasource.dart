@@ -106,8 +106,16 @@ class SpeechDatasourceImpl implements SpeechDatasource {
         }
       },
       onSoundLevelChange: (level) {
-        // Optional: Handle sound level changes for visual feedback
-        debugPrint('SpeechDatasource: Sound level: $level');
+        // Emit sound level changes for visual feedback
+        if (_shouldKeepListening) {
+          _streamController?.add(SpeechResultModel(
+            recognizedWords: '',
+            hasConfidenceRating: false,
+            confidence: 0.0,
+            finalResult: false,
+            soundLevel: level,
+          ));
+        }
       },
       localeId: _currentLocaleId,
       listenOptions: SpeechListenOptions(

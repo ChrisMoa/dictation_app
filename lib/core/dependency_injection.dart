@@ -9,7 +9,6 @@ import 'package:dictation_app/core/services/whisper_service.dart';
 import 'package:dictation_app/features/dictation/data/repositories/speech_repository_impl.dart';
 import 'package:dictation_app/features/dictation/data/datasources/speech_datasource.dart';
 import 'package:dictation_app/features/dictation/data/datasources/whisper_datasource.dart';
-import 'package:dictation_app/features/dictation/data/datasources/whisper4dart_datasource.dart';
 import 'package:dictation_app/features/dictation/data/datasources/whisper_cli_linux_datasource.dart';
 import 'package:dictation_app/features/dictation/domain/repositories/speech_repository.dart';
 import 'package:dictation_app/features/dictation/domain/usecases/start_listening.dart';

@@ -25,6 +25,7 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
   StreamController<SpeechResultModel>? _streamController;
   bool _isListening = false;
   Timer? _transcriptionTimer;
+  StreamSubscription<Amplitude>? _amplitudeSubscription;
   String? _currentRecordingPath;
   final List<String> _accumulatedText = [];
   bool _isTranscribing = false;
@@ -121,6 +122,19 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
     return true;
   }
 
+  String _buildInitialPrompt({int maxWords = 20}) {
+    if (_accumulatedText.isEmpty) return '';
+    final words = _accumulatedText
+        .join(' ')
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.length <= maxWords) {
+      return words.join(' ');
+    }
+    return words.sublist(words.length - maxWords).join(' ');
+  }
+
   // Path to whisper.cpp executable (permanent installation location)
   static String get _whisperPath {
     final homeDir = Platform.environment['HOME'] ?? '/home/${Platform.environment['USER']}';
@@ -208,11 +222,34 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
 
     // Start continuous recording
     await _startRecording();
+    _startAmplitudeMonitoring();
 
     // Schedule periodic transcription with longer interval for better context
     _schedulePeriodicTranscription();
 
     return _streamController!.stream;
+  }
+
+  void _startAmplitudeMonitoring() {
+    if (_amplitudeSubscription != null) return;
+
+    try {
+      _amplitudeSubscription = _audioRecorder
+          .onAmplitudeChanged(const Duration(milliseconds: 150))
+          .listen((amplitude) {
+        if (_isListening) {
+          _streamController?.add(SpeechResultModel(
+            recognizedWords: '',
+            hasConfidenceRating: false,
+            confidence: 0.0,
+            finalResult: false,
+            soundLevel: amplitude.current,
+          ));
+        }
+      });
+    } catch (e) {
+      debugPrint('WhisperCLI: Failed to start amplitude monitoring: $e');
+    }
   }
 
   Future<void> _startRecording() async {
@@ -284,18 +321,6 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
           return;
         }
 
-        // Emit progress indicator
-        _streamController?.add(
-          SpeechResultModel(
-            recognizedWords: _accumulatedText.isEmpty
-                ? '🎤 Transkribiere...'
-                : '${_accumulatedText.join(' ')} 🎤',
-            hasConfidenceRating: false,
-            confidence: 0.0,
-            finalResult: false,
-          ),
-        );
-
         // Transcribe the audio file
         final text = await _transcribeFile(path);
 
@@ -344,12 +369,13 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
 
       // Build initial prompt based on language to guide transcription
       // This helps reduce hallucinations significantly
-      String initialPrompt;
-      if (language == 'de') {
-        initialPrompt = 'Diktat auf Deutsch. Klare Aussprache.';
-      } else {
-        initialPrompt = 'Dictation in English. Clear speech.';
-      }
+      final basePrompt = language == 'de'
+          ? 'Diktat auf Deutsch. Klare Aussprache.'
+          : 'Dictation in English. Clear speech.';
+      final contextPrompt = _buildInitialPrompt();
+      final initialPrompt = contextPrompt.isEmpty
+          ? basePrompt
+          : '$basePrompt $contextPrompt';
 
       // Run whisper.cpp CLI with optimized parameters for better accuracy
       final result = await Process.run(
@@ -413,6 +439,9 @@ class WhisperCliLinuxDatasource implements SpeechDatasource {
     _isListening = false;
     _transcriptionTimer?.cancel();
     _transcriptionTimer = null;
+
+    await _amplitudeSubscription?.cancel();
+    _amplitudeSubscription = null;
 
     // Wait for any ongoing transcription to complete
     while (_isTranscribing) {

@@ -4,7 +4,7 @@ abstract class DictationState extends Equatable {
   const DictationState();
 
   @override
-  List<Object> get props => [];
+  List<Object?> get props => [];
 }
 
 class DictationInitial extends DictationState {}
@@ -14,14 +14,16 @@ class DictationLoading extends DictationState {}
 class DictationListening extends DictationState {
   final String currentText;
   final String partialText;
+  final double? soundLevel;
 
   const DictationListening({
     required this.currentText,
     required this.partialText,
+    this.soundLevel,
   });
 
   @override
-  List<Object> get props => [currentText, partialText];
+  List<Object?> get props => [currentText, partialText, soundLevel];
 }
 
 class DictationProcessing extends DictationState {

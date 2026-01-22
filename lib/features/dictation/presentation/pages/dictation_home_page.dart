@@ -97,6 +97,13 @@ class _DictationHomePageState extends State<DictationHomePage>
     }
   }
 
+  void _requestSpellCheck() {
+    final text = _textController.text.trim();
+    if (text.isNotEmpty) {
+      context.read<DictationBloc>().add(SpellCheckRequestedEvent(text));
+    }
+  }
+
   void _showOverlay() {
     const config = OverlayConfig(
       width: 300,
@@ -237,12 +244,37 @@ class _DictationHomePageState extends State<DictationHomePage>
                           child: BlocBuilder<DictationBloc, DictationState>(
                             builder: (context, state) {
                               final isSpellChecking = state is SpellCheckLoading;
+                              final listeningState = state is DictationListening ? state : null;
+                              final currentText = listeningState?.currentText ?? _textController.text;
+                              final partialText = listeningState?.partialText ?? '';
+                              final hasPartialText = listeningState != null && partialText.isNotEmpty;
+                              final baseStyle = theme.textTheme.bodyLarge?.copyWith(height: 1.6);
+                              final partialStyle = baseStyle?.copyWith(
+                                color: isDark ? AppColors.textTertiaryDark : AppColors.textTertiaryLight,
+                                fontStyle: FontStyle.italic,
+                                decoration: TextDecoration.underline,
+                                decorationStyle: TextDecorationStyle.dotted,
+                              );
+                              final richText = hasPartialText
+                                  ? TextSpan(
+                                      style: baseStyle,
+                                      children: [
+                                        TextSpan(text: currentText),
+                                        TextSpan(text: partialText, style: partialStyle),
+                                      ],
+                                    )
+                                  : null;
                               return AppTextArea(
                                 controller: _textController,
                                 hintText: 'Tippe auf den Mikrofon-Button um zu diktieren...',
                                 isActive: _isListening,
+                                readOnly: _isListening,
+                                richText: richText,
                                 suffix: TextAreaActions(
                                   characterCount: _textController.text.length,
+                                  onSpellCheck: _textController.text.isNotEmpty && !_isListening
+                                      ? _requestSpellCheck
+                                      : null,
                                   onCopy: _textController.text.isNotEmpty 
                                     ? _saveToClipboard 
                                     : null,
@@ -385,12 +417,14 @@ class _DictationHomePageState extends State<DictationHomePage>
         final isLoading = state is DictationLoading;
         final isSpellChecking = state is SpellCheckLoading;
         final isProcessing = state is DictationProcessing;
+        final soundLevel = state is DictationListening ? state.soundLevel : null;
 
         return Column(
           children: [
             RecordingButton(
               isRecording: _isListening,
               isProcessing: isLoading || isSpellChecking || isProcessing,
+              soundLevel: soundLevel,
               onPressed: _toggleDictation,
             ),
             const SizedBox(height: AppSpacing.sm),

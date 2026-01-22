@@ -159,6 +159,7 @@ class WhisperService {
     bool isNoTimestamps = true,
     bool splitOnWord = true,
     String language = 'de',
+    String? initialPrompt,
   }) async {
     if (!_isInitialized || _whisper == null) {
       debugPrint('WhisperService: Not initialized, initializing now...');
@@ -166,7 +167,7 @@ class WhisperService {
     }
 
     debugPrint('WhisperService: Starting transcription for audio: $audioPath');
-    debugPrint('WhisperService: Parameters - translate: $isTranslate, language: $language');
+    debugPrint('WhisperService: Parameters - translate: $isTranslate, language: $language, prompt: ${initialPrompt?.isNotEmpty == true ? 'yes' : 'no'}');
 
     final stopwatch = Stopwatch()..start();
 
@@ -188,7 +189,7 @@ class WhisperService {
         logPath: logPath,
         numProcessors: 1,
         translate: isTranslate,
-        initialPrompt: '',
+        initialPrompt: initialPrompt ?? '',
         startTime: 0,
         endTime: -1,
         useOriginalTime: true,
