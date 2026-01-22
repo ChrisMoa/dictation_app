@@ -287,9 +287,14 @@ class _DictationHomePageState extends State<DictationHomePage>
                             },
                           ),
                         ),
-                        
-                        const SizedBox(height: AppSpacing.lg),
-                        
+
+                        const SizedBox(height: AppSpacing.md),
+
+                        // Audio visualizer
+                        _buildAudioVisualizer(),
+
+                        const SizedBox(height: AppSpacing.md),
+
                         // Recording button
                         _buildRecordingSection(),
                         
@@ -405,6 +410,25 @@ class _DictationHomePageState extends State<DictationHomePage>
             key: ValueKey(statusText),
             type: statusType,
             label: statusText,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAudioVisualizer() {
+    return BlocBuilder<DictationBloc, DictationState>(
+      builder: (context, state) {
+        final soundLevel = state is DictationListening ? (state.soundLevel ?? -60.0) : -60.0;
+
+        return AnimatedOpacity(
+          duration: const Duration(milliseconds: 300),
+          opacity: _isListening ? 1.0 : 0.3,
+          child: AudioVisualizer(
+            soundLevel: soundLevel,
+            isActive: _isListening,
+            height: 100,
+            barCount: 40,
           ),
         );
       },
